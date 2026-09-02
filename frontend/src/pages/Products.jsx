@@ -93,18 +93,6 @@ export default function Products() {
   const [undoStack, setUndoStack] = useState([]);
   const [showUndo, setShowUndo] = useState(false);
 
-  /*
-   * Add Stock has two intended paths:
-   *
-   * 1. Self Purchased
-   *    Products -> Add Stock -> Cost + Quantity -> Stock added
-   *
-   * 2. Supplier Purchase
-   *    Products -> Add Stock -> Supplier Restock -> Suppliers page
-   *
-   * Supplier purchases continue through the existing supplier purchase
-   * implementation so supplier balances/history are not bypassed.
-   */
   const [stockSource, setStockSource] = useState('self');
 
   const loadProducts = async () => {

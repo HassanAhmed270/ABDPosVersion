@@ -13,7 +13,7 @@ const { getLatestSellingPrice } = require('../lib/pricing');
 const { consumeFIFO, deriveCostSource, disableIfDepleted } = require('../lib/costing');
 const { logAudit } = require('../lib/auditLog');
 const { applyCustomerAccountDelta } = require('../lib/customerAccount');
-const { isValidProductId, isValidOrderId, isValidDiscount, isValidEmail, isValidPhone } = require('../lib/validators');
+const { isValidProductId, isValidOrderId, isValidEmail, isValidPhone } = require('../lib/validators');
 const logger = require('../lib/logger');
 
 const router = express.Router();
@@ -141,27 +141,27 @@ router.post('/billing/draft', requireAuth, asyncHandler(async (req, res) => {
   // this runs silently every few seconds, so a hard 400 here would be
   // disruptive for something the cashier didn't directly trigger.
   const cleanItems = Array.isArray(items)
-    ? items
-        .filter(
-          (it) =>
-            isValidProductId(it.productID) &&
-            typeof it.productName === 'string' &&
-            it.productName.trim() &&
-            Number.isFinite(Number(it.unitPrice)) &&
-            Number(it.unitPrice) >= 0 &&
-            Number.isInteger(it.quantity) &&
-            it.quantity >= 1 &&
-            isValidDiscount(it.discount)
-        )
-        .map((it) => ({
-          productID: it.productID,
-          productName: it.productName,
-          unitPrice: roundMoney(it.unitPrice),
-          quantity: it.quantity,
-          discount: roundMoney(it.discount),
-          discountType: ['none','preset','manual'].includes(it.discountType) ? it.discountType : 'manual'
-        }))
-    : [];
+  ? items
+      .filter(
+        (it) =>
+          isValidProductId(it.productID) &&
+          typeof it.productName === 'string' &&
+          it.productName.trim() &&
+          Number.isFinite(Number(it.retailPrice)) &&
+          Number(it.retailPrice) >= 0 &&
+          Number.isFinite(Number(it.unitPrice)) &&
+          Number(it.unitPrice) >= 0 &&
+          Number.isInteger(it.quantity) &&
+          it.quantity >= 1
+      )
+      .map((it) => ({
+        productID: it.productID,
+        productName: it.productName.trim(),
+        retailPrice: roundMoney(it.retailPrice),
+        unitPrice: roundMoney(it.unitPrice),
+        quantity: it.quantity,
+      }))
+  : [];
 
   const draft = await PendingBill.findOneAndUpdate(
     { cashier: req.user.username },
@@ -244,40 +244,52 @@ router.post('/billing/orderDetails', requireAuth, asyncHandler(async (req, res) 
 
   try {
     await session.withTransaction(async () => {
-      // Re-derive every line's price from the DB's current value instead
-      // of trusting the draft's captured unitPrice outright — that price
-      // was accurate *when the item was added*, but may have moved since
-      // (see CLAUDE.md Stage 2). Comparing against the draft (what the
-      // cashier actually saw on screen) rather than an ad hoc request body
-      // gives the same protection with a steadier reference point.
+      // Re-read the product's current retail price from the DB.
+      // The cashier's entered unitPrice is allowed to be different because
+      // it represents the actual selling rate ("Your Rate").
       const verifiedProducts = [];
+
       for (const item of draft.items) {
         const product = await Product.findOne({ productID: item.productID }).session(session);
+
         if (!product) {
           throw new AppError(400, `Product ${item.productID} no longer exists.`);
         }
 
-        const currentPrice = getLatestSellingPrice(product);
-        const expectedAmount = roundMoney(currentPrice * item.quantity * (1 - item.discount / 100));
-        const draftAmount = roundMoney(item.unitPrice * item.quantity * (1 - item.discount / 100));
+      const currentRetailPrice = roundMoney(getLatestSellingPrice(product));
+const capturedRetailPrice = roundMoney(item.retailPrice);
+const sellingRate = roundMoney(item.unitPrice);
 
-        // Small epsilon for floating-point noise, not for a genuinely different price.
-        if (Math.abs(expectedAmount - draftAmount) > 0.01) {
-          logger.warn(
-            { productID: item.productID, expectedAmount, draftAmount, user: req.user.username },
-            'Rejected order: current product price no longer matches the draft'
-          );
-          throw new AppError(409, `The price for ${item.productID} has changed since you added it. Please review your bill and try again.`);
-        }
+// Retail price is the database/reference price.
+// The cashier's selling rate may intentionally be lower or otherwise
+// different from the retail price.
+if (Math.abs(currentRetailPrice - capturedRetailPrice) > 0.01) {
+  logger.warn(
+    {
+      productID: item.productID,
+      currentRetailPrice,
+      capturedRetailPrice,
+      sellingRate,
+      user: req.user.username,
+    },
+    'Rejected order: current retail price no longer matches the draft'
+  );
 
-        verifiedProducts.push({
-          productID: item.productID,
-          quantity: item.quantity,
-          amount: expectedAmount,
-          discount: roundMoney(item.discount),
-          discountType: item.discountType || 'manual',
-          discountAmount: roundMoney(currentPrice * item.quantity - expectedAmount)
-        });
+  throw new AppError(
+    409,
+    `Retail price for ${item.productID} has changed since you added it. Please review your bill and try again.`
+  );
+}
+
+const amount = roundMoney(sellingRate * item.quantity);
+
+verifiedProducts.push({
+  productID: item.productID,
+  quantity: item.quantity,
+  retailPrice: currentRetailPrice,
+  unitPrice: sellingRate,
+  amount,
+});
       }
 
       // Commit stock: decrement quantity and release the matching
@@ -293,9 +305,11 @@ router.post('/billing/orderDetails', requireAuth, asyncHandler(async (req, res) 
           { $inc: { quantity: -p.quantity, reserved: -p.quantity } },
           { session, new: true }
         );
+
         if (!updated) {
           throw new AppError(409, `Stock for ${p.productID} could not be confirmed. Please refresh and try again.`);
         }
+
         await disableIfDepleted(updated, session);
 
         // Stage 22: record which cost batch(es) this line's units
@@ -330,14 +344,18 @@ router.post('/billing/orderDetails', requireAuth, asyncHandler(async (req, res) 
       // window where this read could go stale before the write (the
       // write is a plain $inc, not this value written back).
       let creditApplied = 0;
+
       if (!isWalkIn) {
         const customerDoc = await Customer.findOne({ customerName: draft.customerName }).session(session);
+
         if (!customerDoc) {
           throw new AppError(400, `Customer "${draft.customerName}" no longer exists.`);
         }
+
         const existingCredit = roundMoney(customerDoc.creditBalance || 0);
         creditApplied = roundMoney(Math.min(existingCredit, verifiedTotal));
       }
+
       const netOwed = roundMoney(verifiedTotal - creditApplied);
 
       // Payment (Stage 5): a bill no longer has to be paid in full to
@@ -350,8 +368,15 @@ router.post('/billing/orderDetails', requireAuth, asyncHandler(async (req, res) 
       // draft (Stage 4).
       const amountPaid = roundMoney(Math.min(Math.max(draft.paidInput || 0, 0), netOwed));
       const balanceDue = roundMoney(Math.max(0, netOwed - amountPaid));
-      const paymentStatus = amountPaid <= 0 ? (balanceDue > 0 ? 'unpaid' : 'paid') : balanceDue > 0 ? 'partial' : 'paid';
-      const payments = amountPaid > 0 ? [{ amount: amountPaid, date: new Date(), method: draft.paymentMethod || 'cash' }] : [];
+      const paymentStatus = amountPaid <= 0
+        ? (balanceDue > 0 ? 'unpaid' : 'paid')
+        : balanceDue > 0
+          ? 'partial'
+          : 'paid';
+
+      const payments = amountPaid > 0
+        ? [{ amount: amountPaid, date: new Date(), method: draft.paymentMethod || 'cash' }]
+        : [];
 
       // Stage 19: the amount paid beyond netOwed — same "change" the
       // comment above already described, except now the cashier could
@@ -367,7 +392,7 @@ router.post('/billing/orderDetails', requireAuth, asyncHandler(async (req, res) 
       // Single signed delta for this whole transaction's effect on the
       // customer's running balance: what this order added minus what
       // actually got applied against it. When the overpaid excess is
-      // banked, the *entire* cash collected (draft.paidInput) counts —
+      // banked, the entire cash collected (draft.paidInput) counts —
       // that's what makes it able to pay down debt from a completely
       // different order, not just this one, in the same step.
       const effectivePaid = bankOverpay ? roundMoney(Math.max(draft.paidInput || 0, 0)) : amountPaid;
@@ -390,6 +415,7 @@ router.post('/billing/orderDetails', requireAuth, asyncHandler(async (req, res) 
         ],
         { session }
       );
+
       order = created[0];
 
       // Walk-in sales don't get a customer order-history push —
@@ -398,6 +424,7 @@ router.post('/billing/orderDetails', requireAuth, asyncHandler(async (req, res) 
       // credit record for an untracked sale).
       if (!isWalkIn) {
         await applyCustomerAccountDelta(Customer, draft.customerName, accountDelta, session);
+
         await Customer.updateOne(
           { customerName: draft.customerName },
           {
@@ -460,7 +487,9 @@ router.post('/billing/orderid', asyncHandler(async (req, res) => {
     res.status(200).json({ exists: false, orderId: billId });
   }
 }));
+
 const { generateCustomerID } = require('../lib/customerID');
+
 router.post('/billing/addCustomer', requireAuth, asyncHandler(async (req, res) => {
   let { customerName, mobileNo, emergencyMobile, email, address } = req.body;
 
@@ -477,28 +506,36 @@ router.post('/billing/addCustomer', requireAuth, asyncHandler(async (req, res) =
   if (!isValidEmail(email)) {
     return res.status(400).json({ success: false, message: 'That email address doesn\'t look right.' });
   }
+
   if (!isValidPhone(mobileNo) || !isValidPhone(emergencyMobile)) {
     return res.status(400).json({ success: false, message: 'That phone number doesn\'t look right.' });
   }
 
   const existingCustomer = await Customer.findOne({ customerName });
+
   if (existingCustomer) {
     return res.status(400).json({ success: false, message: 'Customer already exists' });
   }
 
   const customerID = await generateCustomerID();
 
-const newCustomer = new Customer({
-  customerID,
-  customerName,
-  mobileNo,
-  emergencyMobile,
-  email,
-  address,
-  orders: []
-});await newCustomer.save();
+  const newCustomer = new Customer({
+    customerID,
+    customerName,
+    mobileNo,
+    emergencyMobile,
+    email,
+    address,
+    orders: []
+  });
 
-  res.status(201).json({ success: true, message: 'Customer added successfully', customer: newCustomer });
+  await newCustomer.save();
+
+  res.status(201).json({
+    success: true,
+    message: 'Customer added successfully',
+    customer: newCustomer
+  });
 }));
 
 module.exports = router;

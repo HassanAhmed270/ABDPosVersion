@@ -13,10 +13,9 @@ const orderSchema = new Schema({
     {
       productID: { type: String, required: true },
       quantity: { type: Number, required: true, min: 1 },
+      retailPrice: { type: Number, required: true, min: 0 },
+      unitPrice: { type: Number, required: true, min: 0 },
       amount: { type: Number, required: true, min: 0 },
-      discount: { type: Number, required: true, min: 0, max: 100 }, // discountValue (%)
-      discountType: { type: String, enum: ['none', 'preset', 'manual'], default: 'manual' },
-      discountAmount: { type: Number, required: true, min: 0, default: 0 }, // $ saved on this line
       // Stage 22 — batch-based costing. Set once at commit time
       // (POST /billing/orderDetails) from lib/costing.js's consumeFIFO(),
       // then frozen: later restocks/price changes never rewrite these.

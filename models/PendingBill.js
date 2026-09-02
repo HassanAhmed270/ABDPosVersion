@@ -27,11 +27,10 @@ const pendingBillSchema = new Schema({
     {
       productID: { type: String, required: true, match: /^#\d{4}$/ },
       productName: { type: String, required: true },
+      retailPrice: { type: Number, required: true, min: 0 },
       unitPrice: { type: Number, required: true, min: 0 },
-      quantity: { type: Number, required: true, min: 1 },
-      discount: { type: Number, required: true, min: 0, max: 100, default: 0 },
-      discountType: { type: String, enum: ['none', 'preset', 'manual'], default: 'manual' },
-    },
+      quantity: { type: Number, required: true, min: 1 }
+    }
   ],
   status: { type: String, enum: ['active', 'committed', 'abandoned'], default: 'active' },
   updatedAt: { type: Date, default: Date.now },

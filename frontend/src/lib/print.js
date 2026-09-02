@@ -2,7 +2,9 @@ export function printReceipt(html) {
   const printWindow = window.open('', '', 'width=420,height=700');
 
   if (!printWindow) {
-    throw new Error('Unable to open print window. Please allow pop-ups for this site.');
+    throw new Error(
+      'Unable to open print window. Please allow pop-ups for this site.'
+    );
   }
 
   printWindow.document.write(`
@@ -130,27 +132,23 @@ export function printReceipt(html) {
           }
 
           .receipt table.items .col-item {
-            width: 24%;
+            width: 40%;
+          }
+
+          .receipt table.items .col-retail {
+            width: 17%;
           }
 
           .receipt table.items .col-rate {
-            width: 16%;
+            width: 17%;
           }
 
           .receipt table.items .col-qty {
             width: 9%;
           }
 
-          .receipt table.items .col-subtotal {
-            width: 17%;
-          }
-
-          .receipt table.items .col-disc {
-            width: 15%;
-          }
-
           .receipt table.items .col-total {
-            width: 19%;
+            width: 17%;
           }
 
           .receipt table.items th,
@@ -173,11 +171,6 @@ export function printReceipt(html) {
             border-bottom: 1px dashed #000;
             padding-bottom: 3px;
             font-weight: bold;
-          }
-
-          .receipt table.items td.revised-item {
-            text-align: left;
-            font-weight: 600;
           }
 
           .receipt table.items td.item-name {
@@ -251,17 +244,7 @@ function pad2(n) {
 }
 
 function formatReceiptMoney(value) {
-  return String(Math.round(Number(value) || 0));
-}
-
-function formatReceiptDiscount(value) {
-  const number = Number(value);
-
-  if (!Number.isFinite(number)) {
-    return '0%';
-  }
-
-  return `${number.toFixed(2).replace(/\.?0+$/, '')}%`;
+  return String(value ?? 0);
 }
 
 export function formatReceiptDate(date) {
@@ -288,7 +271,6 @@ export function buildReceiptHtml({
   customerName,
   customerAddress,
   items,
-  discountLabel,
   grandTotalLabel,
   paidLabel,
   settlementLabel,
@@ -302,9 +284,8 @@ export function buildReceiptHtml({
         <tr>
           <td class="item-name">${item.itemName}</td>
           <td>${formatReceiptMoney(item.retailLabel)}</td>
+          <td>${formatReceiptMoney(item.rateLabel)}</td>
           <td>${item.qty}</td>
-          <td>${formatReceiptMoney(item.subtotalLabel)}</td>
-          <td>${formatReceiptDiscount(item.discountLabel)}</td>
           <td>${formatReceiptMoney(item.totalLabel)}</td>
         </tr>
       `
@@ -347,10 +328,9 @@ export function buildReceiptHtml({
       <table class="items">
         <colgroup>
           <col class="col-item" />
+          <col class="col-retail" />
           <col class="col-rate" />
           <col class="col-qty" />
-          <col class="col-subtotal" />
-          <col class="col-disc" />
           <col class="col-total" />
         </colgroup>
 
@@ -358,9 +338,8 @@ export function buildReceiptHtml({
           <tr>
             <th>Item</th>
             <th>Retail</th>
+            <th>Rate</th>
             <th>Qty</th>
-            <th>Subtotal</th>
-            <th>Discount</th>
             <th>Total</th>
           </tr>
         </thead>
@@ -371,17 +350,6 @@ export function buildReceiptHtml({
       </table>
 
       <hr class="sep" />
-
-      ${
-        discountLabel
-          ? `
-            <div class="totals-row">
-              <span>Discount</span>
-              <span>-${formatReceiptMoney(discountLabel)}</span>
-            </div>
-          `
-          : ''
-      }
 
       <div class="totals-row grand">
         <span>Grand Total</span>

@@ -9,7 +9,7 @@ const OfflineSale = require('../models/OfflineSale');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const { asyncHandler } = require('../middleware/errorHandler');
 const { AppError } = require('../lib/errors');
-const { isValidProductId, isValidDiscount } = require('../lib/validators');
+const { isValidProductId } = require('../lib/validators');
 const { roundMoney } = require('../lib/money');
 const { syncOfflineSale } = require('../lib/offlineSync');
 const logger = require('../lib/logger');
@@ -18,30 +18,33 @@ const router = express.Router();
 
 function validateItems(items) {
   if (!Array.isArray(items) || items.length === 0) return null;
+
   const clean = [];
+
   for (const it of items) {
     if (
       !isValidProductId(it.productID) ||
       typeof it.productName !== 'string' ||
       !it.productName.trim() ||
+      !Number.isFinite(Number(it.retailPrice)) ||
+      Number(it.retailPrice) < 0 ||
       !Number.isFinite(Number(it.unitPrice)) ||
       Number(it.unitPrice) < 0 ||
       !Number.isInteger(it.quantity) ||
-      it.quantity < 1 ||
-      !isValidDiscount(it.discount)
+      it.quantity < 1
     ) {
-      return null; // one bad line invalidates the whole submission — this
-      // is a one-shot commit attempt, not a silently-cleaned autosave.
+      return null;
     }
+
     clean.push({
       productID: it.productID,
       productName: it.productName.trim(),
+      retailPrice: roundMoney(it.retailPrice),
       unitPrice: roundMoney(it.unitPrice),
-      quantity: it.quantity,
-      discount: roundMoney(it.discount),
-      discountType: ['none', 'preset', 'manual'].includes(it.discountType) ? it.discountType : 'manual',
+      quantity: it.quantity
     });
   }
+
   return clean;
 }
 
@@ -53,26 +56,52 @@ router.post(
   '/commit',
   requireAuth,
   asyncHandler(async (req, res) => {
-    const { idempotencyKey, customerName, items, paidInput, paymentMethod, clientBillID, createdOfflineAt } = req.body;
+    const {
+      idempotencyKey,
+      customerName,
+      items,
+      paidInput,
+      paymentMethod,
+      clientBillID,
+      createdOfflineAt
+    } = req.body;
 
     if (typeof idempotencyKey !== 'string' || idempotencyKey.length < 8) {
-      return res.status(400).json({ success: false, message: 'Missing or invalid idempotency key.' });
+      return res.status(400).json({
+        success: false,
+        message: 'Missing or invalid idempotency key.'
+      });
     }
+
     if (!customerName || typeof customerName !== 'string') {
-      return res.status(400).json({ success: false, message: 'Customer name is required.' });
+      return res.status(400).json({
+        success: false,
+        message: 'Customer name is required.'
+      });
     }
+
     const cleanItems = validateItems(items);
+
     if (!cleanItems) {
-      return res.status(400).json({ success: false, message: 'This offline sale has invalid or missing items.' });
+      return res.status(400).json({
+        success: false,
+        message: 'This offline sale has invalid or missing items.'
+      });
     }
+
     const offlineTimestamp = new Date(createdOfflineAt);
+
     if (!createdOfflineAt || Number.isNaN(offlineTimestamp.getTime())) {
-      return res.status(400).json({ success: false, message: 'Missing or invalid offline timestamp.' });
+      return res.status(400).json({
+        success: false,
+        message: 'Missing or invalid offline timestamp.'
+      });
     }
 
     // Already resolved (by this call or an earlier retry that raced it) —
     // hand back the existing outcome rather than re-processing.
     const existing = await OfflineSale.findOne({ idempotencyKey });
+
     if (existing) {
       return res.status(existing.status === 'synced' ? 200 : 409).json({
         success: existing.status === 'synced',
@@ -82,7 +111,8 @@ router.post(
         message:
           existing.status === 'synced'
             ? 'Already synced.'
-            : existing.conflictReason || 'This offline sale is already flagged for review.',
+            : existing.conflictReason ||
+              'This offline sale is already flagged for review.'
       });
     }
 
@@ -91,43 +121,86 @@ router.post(
     // the server and shows up for admin review rather than being lost.
     const offlineSale = await OfflineSale.create({
       idempotencyKey,
-      clientBillID: /^#\d{4}$/.test(clientBillID || '') ? clientBillID : null,
+      clientBillID: /^#\d{4}$/.test(clientBillID || '')
+        ? clientBillID
+        : null,
       cashier: req.user.username,
       customerName: customerName.trim().replace(/\s+/g, ' '),
       items: cleanItems,
-      paidInput: Number.isFinite(Number(paidInput)) && Number(paidInput) >= 0 ? roundMoney(paidInput) : 0,
-      paymentMethod: ['cash', 'card', 'other'].includes(paymentMethod) ? paymentMethod : 'cash',
-      createdOfflineAt: offlineTimestamp,
+      paidInput:
+        Number.isFinite(Number(paidInput)) && Number(paidInput) >= 0
+          ? roundMoney(paidInput)
+          : 0,
+      paymentMethod: ['cash', 'card', 'other'].includes(paymentMethod)
+        ? paymentMethod
+        : 'cash',
+      createdOfflineAt: offlineTimestamp
     });
 
-    const { order, conflictReason } = await syncOfflineSale(offlineSale, { cashier: req.user.username });
+    const { order, conflictReason } = await syncOfflineSale(
+      offlineSale,
+      { cashier: req.user.username }
+    );
 
     if (order) {
       offlineSale.status = 'synced';
       offlineSale.resultingOrderID = order.orderID;
       await offlineSale.save();
-      logger.info({ idempotencyKey, orderID: order.orderID, cashier: req.user.username }, 'Offline sale synced');
-      return res.status(200).json({ success: true, status: 'synced', orderID: order.orderID });
+
+      logger.info(
+        {
+          idempotencyKey,
+          orderID: order.orderID,
+          cashier: req.user.username
+        },
+        'Offline sale synced'
+      );
+
+      return res.status(200).json({
+        success: true,
+        status: 'synced',
+        orderID: order.orderID
+      });
     }
 
     offlineSale.status = 'conflict';
-    offlineSale.conflictReason = conflictReason || 'Could not be synced.';
+    offlineSale.conflictReason =
+      conflictReason || 'Could not be synced.';
     await offlineSale.save();
-    logger.warn({ idempotencyKey, cashier: req.user.username, reason: conflictReason }, 'Offline sale flagged for review');
-    return res.status(409).json({ success: false, status: 'conflict', message: offlineSale.conflictReason });
+
+    logger.warn(
+      {
+        idempotencyKey,
+        cashier: req.user.username,
+        reason: conflictReason
+      },
+      'Offline sale flagged for review'
+    );
+
+    return res.status(409).json({
+      success: false,
+      status: 'conflict',
+      message: offlineSale.conflictReason
+    });
   })
 );
 
 // GET /api/sync/conflicts — admin queue of offline sales needing a human
-// decision (stock ran out in the meantime, price moved, customer/product
-// deleted, etc).
+// decision (stock ran out in the meantime, retail price moved, customer/
+// product deleted, etc).
 router.get(
   '/conflicts',
   requireAuth,
   requireAdmin,
   asyncHandler(async (req, res) => {
-    const conflicts = await OfflineSale.find({ status: 'conflict' }).sort({ receivedAt: 1 });
-    res.json({ success: true, conflicts });
+    const conflicts = await OfflineSale.find({
+      status: 'conflict'
+    }).sort({ receivedAt: 1 });
+
+    res.json({
+      success: true,
+      conflicts
+    });
   })
 );
 
@@ -140,40 +213,74 @@ router.post(
   requireAdmin,
   asyncHandler(async (req, res) => {
     const { action, reason } = req.body;
+
     if (!['retry', 'reject'].includes(action)) {
-      return res.status(400).json({ success: false, message: 'action must be "retry" or "reject".' });
+      return res.status(400).json({
+        success: false,
+        message: 'action must be "retry" or "reject".'
+      });
     }
 
     const offlineSale = await OfflineSale.findById(req.params.id);
+
     if (!offlineSale) {
       throw new AppError(404, 'Offline sale not found.');
     }
+
     if (offlineSale.status !== 'conflict') {
-      return res.status(409).json({ success: false, message: `Already resolved (${offlineSale.status}).` });
+      return res.status(409).json({
+        success: false,
+        message: `Already resolved (${offlineSale.status}).`
+      });
     }
 
     if (action === 'reject') {
       offlineSale.status = 'rejected';
-      offlineSale.conflictReason = reason || offlineSale.conflictReason;
+      offlineSale.conflictReason =
+        reason || offlineSale.conflictReason;
       offlineSale.resolvedBy = req.user.username;
       offlineSale.resolvedAt = new Date();
+
       await offlineSale.save();
-      return res.json({ success: true, status: 'rejected' });
+
+      return res.json({
+        success: true,
+        status: 'rejected'
+      });
     }
 
     // action === 'retry'
-    const { order, conflictReason } = await syncOfflineSale(offlineSale, { cashier: offlineSale.cashier });
+    const { order, conflictReason } = await syncOfflineSale(
+      offlineSale,
+      { cashier: offlineSale.cashier }
+    );
+
     offlineSale.resolvedBy = req.user.username;
     offlineSale.resolvedAt = new Date();
+
     if (order) {
       offlineSale.status = 'synced';
       offlineSale.resultingOrderID = order.orderID;
+
       await offlineSale.save();
-      return res.json({ success: true, status: 'synced', orderID: order.orderID });
+
+      return res.json({
+        success: true,
+        status: 'synced',
+        orderID: order.orderID
+      });
     }
-    offlineSale.conflictReason = conflictReason || offlineSale.conflictReason;
-    await offlineSale.save(); // stays 'conflict', resolvedBy/At updated for audit trail of the attempt
-    return res.status(409).json({ success: false, status: 'conflict', message: offlineSale.conflictReason });
+
+    offlineSale.conflictReason =
+      conflictReason || offlineSale.conflictReason;
+
+    await offlineSale.save();
+
+    return res.status(409).json({
+      success: false,
+      status: 'conflict',
+      message: offlineSale.conflictReason
+    });
   })
 );
 

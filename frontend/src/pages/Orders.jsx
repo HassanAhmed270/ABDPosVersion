@@ -8,7 +8,7 @@ import { useAuth } from '../lib/AuthContext';
 import { useConfirm } from '../components/ConfirmDialog';
 import { api } from '../lib/api';
 import { formatMoney, formatMoneyShort } from '../lib/money';
-import { printReceipt, formatReceiptDate, formatReceiptTime } from '../lib/print';
+import { printReceipt } from '../lib/print';
 import { SHOP_NAME, SHOP_ADDRESS, SHOP_PHONE } from '../lib/shopInfo';
 import { useDebouncedValue } from '../lib/useDebouncedValue';
 
@@ -20,8 +20,6 @@ const statusBadge = {
 };
 
 const PAGE_SIZE = 10;
-// Stage 14 — must match the sentinel in routes/billing.js,
-// routes/orders.js, and Billing.jsx exactly.
 const WALKIN_CUSTOMER = 'Walk-in / Unknown';
 
 export default function Orders() {
@@ -67,6 +65,7 @@ export default function Orders() {
 
   const loadOrders = async () => {
     setLoading(true);
+
     try {
       const data = await api.getOrders({
         search: debouncedSearch,
@@ -166,7 +165,13 @@ export default function Orders() {
   };
 
   const editWindowOpen = (order) =>
-    Date.now() - new Date(order.orderDate).getTime() <= 72 * 60 * 60 * 1000;
+    Date.now() - new Date(order.orderDate).getTime() <=
+    72 * 60 * 60 * 1000;
+
+  const getProductName = (productID) => {
+    const product = allProducts.find((p) => p.productID === productID);
+    return product?.productName || productID;
+  };
 
   const handleEditSubmit = async (e) => {
     e.preventDefault();
@@ -177,12 +182,8 @@ export default function Orders() {
 
     const removeQty = parseInt(editForm.removeQty);
 
-    if (isNaN(removeQty) || removeQty < 0) {
-      return toast.error('Enter a valid quantity to remove.');
-    }
-
-    if (removeQty === 0) {
-      return toast.error('Quantity to remove must be greater than 0.');
+    if (isNaN(removeQty) || removeQty <= 0) {
+      return toast.error('Enter a quantity greater than 0 to remove.');
     }
 
     const product = detail.order.products.find(
@@ -194,7 +195,9 @@ export default function Orders() {
     }
 
     if (removeQty > product.quantity) {
-      return toast.error(`You can remove a maximum of ${product.quantity}.`);
+      return toast.error(
+        `You can remove a maximum of ${product.quantity}.`
+      );
     }
 
     const newQty = product.quantity - removeQty;
@@ -208,7 +211,6 @@ export default function Orders() {
         productID: editForm.productID,
         newQty,
         reason: editForm.reason.trim(),
-        settlement: 'credit',
       });
 
       toast.success('Order updated.');
@@ -370,37 +372,16 @@ export default function Orders() {
     const itemRows = order.products
       .map((p) => {
         const quantity = Number(p.quantity || 0);
+        const retailPrice = Number(p.retailPrice || 0);
+        const unitPrice = Number(p.unitPrice || 0);
         const total = Number(p.amount || 0);
-        const discountValue = Number(p.discount || 0);
-
-        let subtotal = total;
-        let discountAmount = 0;
-
-        if (
-          p.discountType === 'percentage' ||
-          p.discountType === 'percent'
-        ) {
-          if (discountValue > 0 && discountValue < 100) {
-            subtotal = total / (1 - discountValue / 100);
-            discountAmount = subtotal - total;
-          }
-        } else if (p.discountType === 'fixed') {
-          discountAmount = discountValue;
-          subtotal = total + discountAmount;
-        }
-
-        const rate = quantity > 0 ? total / quantity : 0;
 
         return `
           <tr>
-            <td class="item-name" colspan="6">${p.productID}</td>
-          </tr>
-          <tr>
-            <td></td>
-            <td>${formatMoneyShort(rate)}</td>
+            <td class="item-name">${getProductName(p.productID)}</td>
+            <td>${formatMoneyShort(retailPrice)}</td>
+            <td>${formatMoneyShort(unitPrice)}</td>
             <td>${quantity}</td>
-            <td>${formatMoneyShort(subtotal)}</td>
-            <td>${formatMoneyShort(discountAmount)}</td>
             <td>${formatMoneyShort(total)}</td>
           </tr>
         `;
@@ -411,12 +392,10 @@ export default function Orders() {
       .map((e) => {
         const settlementLabel =
           e.settlement === 'credit'
-            ? `Exchange — Store Credit: ${formatMoney(
-                e.creditAmount || 0
-              )}`
+            ? `Store Credit: ${formatMoney(e.creditAmount || 0)}`
             : e.settlement === 'cash'
-            ? `Cash Back: ${formatMoney(e.creditAmount || 0)}`
-            : '—';
+              ? `Cash Back: ${formatMoney(e.creditAmount || 0)}`
+              : '—';
 
         return `
           <tr>
@@ -440,6 +419,7 @@ export default function Orders() {
             <td>${r.processedBy}</td>
             <td>${new Date(r.refundDate).toLocaleString()}</td>
             <td>${r.reason || ''}</td>
+            <td>${r.settlement || 'none'}</td>
           </tr>
         `
       )
@@ -457,15 +437,21 @@ export default function Orders() {
           <span>
             Revised Receipt${order.status === 'refunded' ? ' (REFUNDED)' : ''}
           </span>
-          <span>${formatReceiptDate(now)}</span>
+          <span>${now.toLocaleDateString()}</span>
         </div>
 
         <div class="meta-row">
           <span>Order: ${order.orderID}</span>
-          <span>${formatReceiptTime(now)}</span>
+          <span>${now.toLocaleTimeString()}</span>
         </div>
 
         <div>Customer Name: ${order.customerName}</div>
+
+        ${
+          order.offlineOrigin
+            ? '<div class="offline-banner">OFFLINE SALE — SYNCED</div>'
+            : ''
+        }
 
         <hr class="sep" />
 
@@ -473,9 +459,8 @@ export default function Orders() {
           <colgroup>
             <col class="col-item" />
             <col class="col-rate" />
+            <col class="col-rate" />
             <col class="col-qty" />
-            <col class="col-subtotal" />
-            <col class="col-disc" />
             <col class="col-total" />
           </colgroup>
 
@@ -483,9 +468,8 @@ export default function Orders() {
             <tr>
               <th>Item</th>
               <th>Retail</th>
+              <th>Rate</th>
               <th>Qty</th>
-              <th>Subtotal</th>
-              <th>Discount</th>
               <th>Total</th>
             </tr>
           </thead>
@@ -501,6 +485,17 @@ export default function Orders() {
           <span>Grand Total</span>
           <span>${formatMoney(order.totalAmount)}</span>
         </div>
+
+        ${
+          order.creditApplied > 0
+            ? `
+              <div class="totals-row">
+                <span>Store Credit Applied</span>
+                <span>${formatMoney(order.creditApplied)}</span>
+              </div>
+            `
+            : ''
+        }
 
         <div class="totals-row">
           <span>Paid</span>
@@ -553,6 +548,7 @@ export default function Orders() {
                     <th>By</th>
                     <th>When</th>
                     <th>Reason</th>
+                    <th>Settlement</th>
                   </tr>
                 </thead>
                 <tbody>${refundRows}</tbody>
@@ -581,9 +577,7 @@ export default function Orders() {
           />
 
           {error && (
-            <p className="text-red-600 text-sm mb-4">
-              {error}
-            </p>
+            <p className="text-red-600 text-sm mb-4">{error}</p>
           )}
 
           {!isAdmin && (
@@ -637,9 +631,7 @@ export default function Orders() {
                     onSort={handleSort}
                   />
 
-                  <th className="py-3 px-2 text-left">
-                    Status
-                  </th>
+                  <th className="py-3 px-2 text-left">Status</th>
                 </tr>
               </thead>
 
@@ -668,14 +660,10 @@ export default function Orders() {
                       <tr
                         onClick={() => toggleRow(o.orderID)}
                         className={`border-b hover:bg-gray-50 cursor-pointer ${
-                          expandedID === o.orderID
-                            ? 'bg-blue-50'
-                            : ''
+                          expandedID === o.orderID ? 'bg-blue-50' : ''
                         }`}
                       >
-                        <td className="py-2 px-3">
-                          {o.orderID}
-                        </td>
+                        <td className="py-2 px-3">{o.orderID}</td>
 
                         <td className="py-2 px-3">
                           {o.customerName}
@@ -747,6 +735,12 @@ export default function Orders() {
                                     ).toLocaleString()}
                                   </div>
 
+                                  {detail.order.offlineOrigin && (
+                                    <div className="bg-amber-100 text-amber-800 rounded px-3 py-2 text-xs font-medium">
+                                      Offline sale — synced successfully
+                                    </div>
+                                  )}
+
                                   {detail.order.status === 'refunded' && (
                                     <div className="bg-gray-200 text-gray-700 rounded px-3 py-1 text-xs font-medium">
                                       This order has been refunded.
@@ -757,19 +751,19 @@ export default function Orders() {
                                     <thead className="bg-gray-100">
                                       <tr>
                                         <th className="p-1 text-left border">
-                                          Code
+                                          Item
                                         </th>
-
+                                        <th className="p-1 text-left border">
+                                          Retail
+                                        </th>
+                                        <th className="p-1 text-left border">
+                                          Rate
+                                        </th>
                                         <th className="p-1 text-left border">
                                           Qty
                                         </th>
-
                                         <th className="p-1 text-left border">
-                                          Amount
-                                        </th>
-
-                                        <th className="p-1 text-left border">
-                                          Discount
+                                          Total
                                         </th>
                                       </tr>
                                     </thead>
@@ -778,7 +772,20 @@ export default function Orders() {
                                       {detail.order.products.map((p) => (
                                         <tr key={p.productID}>
                                           <td className="p-1 border">
-                                            {p.productID}
+                                            <div className="font-medium">
+                                              {getProductName(p.productID)}
+                                            </div>
+                                            <div className="text-gray-400">
+                                              {p.productID}
+                                            </div>
+                                          </td>
+
+                                          <td className="p-1 border">
+                                            {formatMoney(p.retailPrice)}
+                                          </td>
+
+                                          <td className="p-1 border">
+                                            {formatMoney(p.unitPrice)}
                                           </td>
 
                                           <td className="p-1 border">
@@ -787,11 +794,6 @@ export default function Orders() {
 
                                           <td className="p-1 border">
                                             {formatMoney(p.amount)}
-                                          </td>
-
-                                          <td className="p-1 border">
-                                            {p.discount}% (
-                                            {p.discountType})
                                           </td>
                                         </tr>
                                       ))}
@@ -806,6 +808,17 @@ export default function Orders() {
                                       )}
                                     </span>
                                   </div>
+
+                                  {detail.order.creditApplied > 0 && (
+                                    <div className="flex justify-between text-green-700">
+                                      <span>Store credit applied</span>
+                                      <span>
+                                        {formatMoney(
+                                          detail.order.creditApplied
+                                        )}
+                                      </span>
+                                    </div>
+                                  )}
 
                                   <div className="flex justify-between">
                                     <span>Paid</span>
@@ -824,20 +837,6 @@ export default function Orders() {
                                       )}
                                     </span>
                                   </div>
-
-                                  {detail.order.creditApplied > 0 && (
-                                    <div className="flex justify-between text-green-700">
-                                      <span>
-                                        Store credit applied
-                                      </span>
-
-                                      <span>
-                                        {formatMoney(
-                                          detail.order.creditApplied
-                                        )}
-                                      </span>
-                                    </div>
-                                  )}
 
                                   {detail.order.editHistory?.length > 0 && (
                                     <div>
@@ -865,22 +864,20 @@ export default function Orders() {
                                               {e.settlement === 'credit' && (
                                                 <>
                                                   {' '}
-                                                  — Exchange:{' '}
+                                                  — Store credit:{' '}
                                                   {formatMoney(
-                                                    e.creditAmount
-                                                  )}{' '}
-                                                  added to store credit
+                                                    e.creditAmount || 0
+                                                  )}
                                                 </>
                                               )}
 
                                               {e.settlement === 'cash' && (
                                                 <>
                                                   {' '}
-                                                  — Refund:{' '}
+                                                  — Cash back:{' '}
                                                   {formatMoney(
-                                                    e.creditAmount
-                                                  )}{' '}
-                                                  cash back
+                                                    e.creditAmount || 0
+                                                  )}
                                                 </>
                                               )}
                                             </li>
@@ -920,6 +917,10 @@ export default function Orders() {
                                                 )}{' '}
                                                 store credit
                                               </>
+                                            )}
+
+                                            {r.settlement === 'cash' && (
+                                              <> — cash back</>
                                             )}
                                           </li>
                                         ))}
@@ -991,8 +992,7 @@ export default function Orders() {
                                                 onChange={(e) =>
                                                   setConvertForm({
                                                     ...convertForm,
-                                                    email:
-                                                      e.target.value,
+                                                    email: e.target.value,
                                                   })
                                                 }
                                                 className="border rounded px-2 py-1 w-full text-sm"
@@ -1070,7 +1070,10 @@ export default function Orders() {
                                                     key={p.productID}
                                                     value={p.productID}
                                                   >
-                                                    {p.productID} (qty{' '}
+                                                    {getProductName(
+                                                      p.productID
+                                                    )}{' '}
+                                                    — {p.productID} (qty{' '}
                                                     {p.quantity})
                                                   </option>
                                                 )
@@ -1079,7 +1082,7 @@ export default function Orders() {
 
                                             <input
                                               type="number"
-                                              min="0"
+                                              min="1"
                                               max={
                                                 editForm.productID
                                                   ? detail.order.products.find(
@@ -1089,7 +1092,7 @@ export default function Orders() {
                                                     )?.quantity
                                                   : undefined
                                               }
-                                              placeholder="Quantity to remove (0 = no reduction)"
+                                              placeholder="Quantity to remove"
                                               value={
                                                 editForm.removeQty
                                               }
@@ -1106,14 +1109,11 @@ export default function Orders() {
                                             <input
                                               type="text"
                                               placeholder="Reason (required)"
-                                              value={
-                                                editForm.reason
-                                              }
+                                              value={editForm.reason}
                                               onChange={(e) =>
                                                 setEditForm({
                                                   ...editForm,
-                                                  reason:
-                                                    e.target.value,
+                                                  reason: e.target.value,
                                                 })
                                               }
                                               className="border rounded px-2 py-1 w-full text-sm"
@@ -1132,14 +1132,6 @@ export default function Orders() {
                                       <div className="border border-dashed border-green-300 rounded-lg p-3 bg-white">
                                         <h3 className="font-medium mb-2 text-green-700">
                                           Exchange — add a replacement item
-                                          (Store Credit){' '}
-                                          {!editWindowOpen(
-                                            detail.order
-                                          ) && (
-                                            <span className="text-red-500 text-xs">
-                                              (72h window expired)
-                                            </span>
-                                          )}
                                         </h3>
 
                                         {editWindowOpen(detail.order) && (
@@ -1188,9 +1180,7 @@ export default function Orders() {
                                               type="number"
                                               min="1"
                                               placeholder="Quantity"
-                                              value={
-                                                addForm.quantity
-                                              }
+                                              value={addForm.quantity}
                                               onChange={(e) =>
                                                 setAddForm({
                                                   ...addForm,
@@ -1204,14 +1194,11 @@ export default function Orders() {
                                             <input
                                               type="text"
                                               placeholder="Reason (required)"
-                                              value={
-                                                addForm.reason
-                                              }
+                                              value={addForm.reason}
                                               onChange={(e) =>
                                                 setAddForm({
                                                   ...addForm,
-                                                  reason:
-                                                    e.target.value,
+                                                  reason: e.target.value,
                                                 })
                                               }
                                               className="border rounded px-2 py-1 w-full text-sm"
@@ -1242,8 +1229,10 @@ export default function Orders() {
                                           {detail.order.products.map(
                                             (p) => (
                                               <li key={p.productID}>
-                                                {p.productID} ×{' '}
-                                                {p.quantity}
+                                                {getProductName(
+                                                  p.productID
+                                                )}{' '}
+                                                × {p.quantity}
                                               </li>
                                             )
                                           )}
