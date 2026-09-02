@@ -1,0 +1,70 @@
+@import "tailwindcss";
+
+@theme {
+  --color-brand: #065b8a;
+  --color-brand-dark: #05486b;
+  --color-brand-green: #1b634a;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  @apply bg-gray-50 text-gray-800;
+}
+
+/* Stage — fixed 1536x898 design canvas (see AppCanvas.jsx). The whole app
+   is authored for this one reference size; below it the canvas is scaled
+   down as a single unit instead of the layout reflowing into a mobile
+   arrangement. */
+
+.app-viewport {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Fills the letterboxed area around the canvas on very large or
+     odd-aspect-ratio screens. */
+  background: #05486b;
+}
+
+.app-canvas {
+  flex-shrink: 0;
+  position: relative;
+  overflow: hidden;
+  transform-origin: center center;
+  background: #f9fafb;
+  /* Every `sm:`/`md:`/`lg:` utility in the pages/components was converted
+     to the equivalent `@min-[640px]:` / `@min-[768px]:` / `@min-[1024px]:`
+     container-query variant (same pixel thresholds, just re-anchored).
+     This makes them resolve against the canvas's own (always-1536px)
+     layout width rather than the real physical screen width, so the
+     layout is identical at every screen size instead of silently
+     switching to a mobile arrangement on narrow physical screens. */
+  container-type: inline-size;
+}
+
+/* Every page lays itself out with `h-screen` (and the occasional
+   `min-h-screen` / `w-screen`) on the assumption that it fills the
+   browser viewport, then carves internal `overflow-y-auto` regions out of
+   that. Once the app lives inside a fixed-size, scaled canvas those units
+   need to resolve against the 1536x898 canvas instead of the real
+   (unscaled) window — otherwise a scaled-down window makes the canvas's
+   real height smaller than 100vh, and the existing scroll regions either
+   overflow the canvas or never pick up a scrollbar at all. These rules
+   are unlayered, so they win over the Tailwind utilities of the same
+   name regardless of selector order. */
+.app-canvas .h-screen {
+  height: 100%;
+}
+
+.app-canvas .min-h-screen {
+  min-height: 100%;
+}
+
+.app-canvas .w-screen {
+  width: 100%;
+}
