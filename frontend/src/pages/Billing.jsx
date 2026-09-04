@@ -56,7 +56,7 @@ export default function Billing() {
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [selectedProductId, setSelectedProductId] = useState(null);
-  const [customer, setCustomer] = useState('unknown');
+  const [customer, setCustomer] = useState(WALKIN_CUSTOMER);
   const [showCustomerForm, setShowCustomerForm] = useState(false);
   const [customerForm, setCustomerForm] = useState(emptyCustomerForm);
   const [itemForm, setItemForm] = useState({
@@ -172,7 +172,10 @@ export default function Billing() {
     const itemsArr = Object.values(source).map((item) => ({
       productID: `#${item.productCode}`,
       productName: item.itemName,
-      retailPrice: roundMoney(item.retailPrice),
+      retailPrice:
+        item.retailPrice == null
+          ? null
+          : roundMoney(item.retailPrice),
       unitPrice: roundMoney(item.unitPrice),
       quantity: item.quantity,
     }));
@@ -390,8 +393,11 @@ export default function Billing() {
     // No catalog selling price set — leave both fields blank instead of
     // defaulting to 0, so the cashier has to enter a real rate rather
     // than silently ringing the item up for free.
-    const hasCatalogPrice = product.price != null;
-    const currentPrice = hasCatalogPrice ? roundMoney(product.price) : '';
+    const hasCatalogPrice =
+      product.price != null && Number(product.price) > 0;
+    const currentPrice = hasCatalogPrice
+      ? roundMoney(product.price)
+      : '';
     setItemForm({
       productId: product.productID,
       productName: product.productName,
@@ -438,7 +444,7 @@ export default function Billing() {
     // "Retail" column and Order.retailPrice (required, min 0) both need
     // one. When there's no catalog price to show, mirror the rate the
     // cashier actually charged rather than recording a false Rs 0.
-    const effectiveRetailPrice = retailPrice !== null ? retailPrice : unitPrice;
+    const effectiveRetailPrice = retailPrice;
 
     const product = products.find(
       (p) => p.productID === selectedProductId
@@ -742,9 +748,10 @@ export default function Billing() {
 
       return {
         itemName: item.itemName,
-        retailLabel: formatMoneyShort(
-          roundMoney(item.retailPrice)
-        ),
+        retailLabel:
+          item.retailPrice == null
+            ? ''
+            : formatMoneyShort(roundMoney(item.retailPrice)),
         rateLabel: formatMoneyShort(
           roundMoney(item.unitPrice)
         ),
@@ -761,9 +768,10 @@ export default function Billing() {
         items: itemsSource.map((item) => ({
           itemName: item.itemName,
           quantity: item.quantity,
-          retailPriceLabel: formatMoney(
-            roundMoney(item.retailPrice)
-          ),
+          retailPriceLabel:
+            item.retailPrice == null
+              ? ''
+              : formatMoney(roundMoney(item.retailPrice)),
           unitPriceLabel: formatMoney(
             roundMoney(item.unitPrice)
           ),
@@ -827,7 +835,10 @@ export default function Billing() {
     const receiptItems = Object.values(billingItems).map((item) => ({
       productCode: item.productCode,
       itemName: item.itemName,
-      retailPrice: roundMoney(item.retailPrice),
+      retailPrice:
+        item.retailPrice == null
+          ? null
+          : roundMoney(item.retailPrice),
       unitPrice: roundMoney(item.unitPrice),
       quantity: Number(item.quantity),
     }));
@@ -1525,9 +1536,9 @@ export default function Billing() {
                           <div className="flex justify-between text-gray-600 text-xs">
                             <span>
                               Retail:{' '}
-                              {formatMoney(
-                                item.retailPrice
-                              )}
+                              {item.retailPrice == null
+                                ? ''
+                                : formatMoney(item.retailPrice)}
                             </span>
 
                             <span>
