@@ -11,6 +11,7 @@ import { formatMoney, formatMoneyShort } from '../lib/money';
 import { printReceipt } from '../lib/print';
 import { SHOP_NAME, SHOP_ADDRESS, SHOP_PHONE } from '../lib/shopInfo';
 import { useDebouncedValue } from '../lib/useDebouncedValue';
+import { useSubmitGuard } from '../lib/useSubmitGuard';
 
 const statusBadge = {
   paid: 'bg-green-100 text-green-700',
@@ -62,6 +63,14 @@ export default function Orders() {
   });
 
   const [refundReason, setRefundReason] = useState('');
+
+  // Prevent double-clicks from applying the same edit, add, convert,
+  // or refund twice — each mutates the order and/or a customer
+  // balance (see lib/useSubmitGuard.js).
+  const { submitting: editingItem, guard: guardEditSubmit } = useSubmitGuard();
+  const { submitting: addingItem, guard: guardAddSubmit } = useSubmitGuard();
+  const { submitting: convertingOrder, guard: guardConvertSubmit } = useSubmitGuard();
+  const { submitting: refundingOrder, guard: guardRefundSubmit } = useSubmitGuard();
 
   const loadOrders = async () => {
     setLoading(true);
@@ -173,7 +182,7 @@ export default function Orders() {
     return product?.productName || productID;
   };
 
-  const handleEditSubmit = async (e) => {
+  const handleEditSubmit = guardEditSubmit(async (e) => {
     e.preventDefault();
 
     if (!editForm.productID) {
@@ -225,9 +234,9 @@ export default function Orders() {
     } catch (err) {
       toast.error('Edit failed: ' + err.message);
     }
-  };
+  });
 
-  const handleAddSubmit = async (e) => {
+  const handleAddSubmit = guardAddSubmit(async (e) => {
     e.preventDefault();
 
     if (!addForm.productID) {
@@ -274,9 +283,9 @@ export default function Orders() {
     } catch (err) {
       toast.error('Failed to add item: ' + err.message);
     }
-  };
+  });
 
-  const handleConvertSubmit = async (e) => {
+  const handleConvertSubmit = guardConvertSubmit(async (e) => {
     e.preventDefault();
 
     if (!convertForm.customerName.trim()) {
@@ -311,9 +320,9 @@ export default function Orders() {
     } catch (err) {
       toast.error('Failed to convert order: ' + err.message);
     }
-  };
+  });
 
-  const handleRefundSubmit = async (e) => {
+  const handleRefundSubmit = guardRefundSubmit(async (e) => {
     e.preventDefault();
 
     const items = detail.order.products.map((p) => ({
@@ -361,7 +370,7 @@ export default function Orders() {
     } catch (err) {
       toast.error('Refund failed: ' + err.message);
     }
-  };
+  });
 
   const handlePrintRevised = () => {
     if (!detail) return;
@@ -1016,9 +1025,10 @@ export default function Orders() {
 
                                               <button
                                                 type="submit"
-                                                className="w-full bg-blue-600 text-white rounded py-1.5 text-sm hover:bg-blue-700"
+                                                disabled={convertingOrder}
+                                                className="w-full bg-blue-600 text-white rounded py-1.5 text-sm hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                                               >
-                                                Convert & Attach
+                                                {convertingOrder ? 'Converting…' : 'Convert & Attach'}
                                               </button>
                                             </form>
                                           </div>
@@ -1121,9 +1131,10 @@ export default function Orders() {
 
                                             <button
                                               type="submit"
-                                              className="w-full bg-brand text-white rounded py-1.5 text-sm hover:bg-brand-dark"
+                                              disabled={editingItem}
+                                              className="w-full bg-brand text-white rounded py-1.5 text-sm hover:bg-brand-dark disabled:opacity-50 disabled:cursor-not-allowed"
                                             >
-                                              Save Edit
+                                              {editingItem ? 'Saving…' : 'Save Edit'}
                                             </button>
                                           </form>
                                         )}
@@ -1206,9 +1217,10 @@ export default function Orders() {
 
                                             <button
                                               type="submit"
-                                              className="w-full bg-green-600 text-white rounded py-1.5 text-sm hover:bg-green-700"
+                                              disabled={addingItem}
+                                              className="w-full bg-green-600 text-white rounded py-1.5 text-sm hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
                                             >
-                                              Add Item
+                                              {addingItem ? 'Adding…' : 'Add Item'}
                                             </button>
                                           </form>
                                         )}
@@ -1256,9 +1268,10 @@ export default function Orders() {
 
                                           <button
                                             type="submit"
-                                            className="w-full bg-red-600 text-white rounded py-1.5 text-sm hover:bg-red-700"
+                                            disabled={refundingOrder}
+                                            className="w-full bg-red-600 text-white rounded py-1.5 text-sm hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
                                           >
-                                            Refund Full Order — Cash Back
+                                            {refundingOrder ? 'Refunding…' : 'Refund Full Order — Cash Back'}
                                           </button>
                                         </form>
                                       </div>

@@ -8,6 +8,8 @@ import { useAuth } from '../lib/AuthContext';
 
 import { useConfirm } from '../components/ConfirmDialog';
 
+import { useSubmitGuard } from '../lib/useSubmitGuard';
+
 import { api } from '../lib/api';
 
 import { roundMoney, formatMoney, formatMoneyShort } from '../lib/money';
@@ -92,6 +94,11 @@ export default function Billing() {
   }, [offlineSyncEnabled]);
 
   const [printerConnected, setPrinterConnected] = useState(false);
+
+  // Prevent double-clicks from reserving stock or generating the same
+  // bill twice (see lib/useSubmitGuard.js).
+  const { submitting: addingToBill, guard: guardAddToBill } = useSubmitGuard();
+  const { submitting: generatingBill, guard: guardGenerateBill } = useSubmitGuard();
   const webUSBSupported = isWebUSBSupported();
 
   useEffect(() => {
@@ -380,7 +387,11 @@ export default function Billing() {
 
   const handleSelectProduct = (product) => {
     setSelectedProductId(product.productID);
-    const currentPrice = roundMoney(product.price ?? 0);
+    // No catalog selling price set — leave both fields blank instead of
+    // defaulting to 0, so the cashier has to enter a real rate rather
+    // than silently ringing the item up for free.
+    const hasCatalogPrice = product.price != null;
+    const currentPrice = hasCatalogPrice ? roundMoney(product.price) : '';
     setItemForm({
       productId: product.productID,
       productName: product.productName,
@@ -391,20 +402,24 @@ export default function Billing() {
     });
   };
 
-  const handleAddToBill = async () => {
+  const handleAddToBill = guardAddToBill(async () => {
     if (!selectedProductId) {
       toast.error('Please select a product from the table first!');
       return;
     }
 
     const quantity = parseInt(itemForm.quantity);
-    const retailPrice = roundMoney(itemForm.retailPrice);
+    // Retail Price is a disabled, catalog-driven field — the cashier
+    // never types into it directly. When the product has no catalog
+    // selling price at all, itemForm.retailPrice is '' (see
+    // handleSelectProduct) rather than a real number, so there's no
+    // reference price to require or cap the sale against.
+    const hasRetailPrice = itemForm.retailPrice !== '' && itemForm.retailPrice != null;
+    const retailPrice = hasRetailPrice ? roundMoney(itemForm.retailPrice) : null;
     const unitPrice = roundMoney(itemForm.unitPrice);
 
     if (
       !itemForm.productName ||
-      !Number.isFinite(retailPrice) ||
-      retailPrice < 0 ||
       !Number.isFinite(unitPrice) ||
       unitPrice < 0 ||
       !Number.isInteger(quantity) ||
@@ -414,10 +429,16 @@ export default function Billing() {
       return;
     }
 
-    if (unitPrice > retailPrice) {
+    if (retailPrice !== null && unitPrice > retailPrice) {
       toast.error('Unit Price cannot be greater than Retail Price.');
       return;
     }
+
+    // From here on, retailPrice must be a real number: the receipt's
+    // "Retail" column and Order.retailPrice (required, min 0) both need
+    // one. When there's no catalog price to show, mirror the rate the
+    // cashier actually charged rather than recording a false Rs 0.
+    const effectiveRetailPrice = retailPrice !== null ? retailPrice : unitPrice;
 
     const product = products.find(
       (p) => p.productID === selectedProductId
@@ -475,7 +496,7 @@ export default function Billing() {
             productCode:
               selectedProductId.replace('#', ''),
             itemName: itemForm.productName,
-            retailPrice,
+            retailPrice: effectiveRetailPrice,
             unitPrice,
             quantity,
             offline: true,
@@ -527,7 +548,7 @@ export default function Billing() {
         productCode:
           selectedProductId.replace('#', ''),
         itemName: itemForm.productName,
-        retailPrice,
+        retailPrice: effectiveRetailPrice,
         unitPrice,
         quantity,
       },
@@ -543,7 +564,7 @@ export default function Billing() {
     });
 
     setSelectedProductId(null);
-  };
+  });
 
   const handlePreview = async () => {
     if (billId) {
@@ -552,47 +573,35 @@ export default function Billing() {
     }
 
     try {
-      let candidate =
-        '#' +
-        Math.floor(Math.random() * 10000)
-          .toString()
-          .padStart(4, '0');
-
-      for (let i = 0; i < 20; i++) {
-        try {
-          const data =
-            await api.getUniqueOrderId(candidate);
-
-          if (!data.exists) break;
-
-          const num =
-            (parseInt(candidate.slice(1)) + 1) %
-            10000;
-
-          candidate =
-            '#' + num.toString().padStart(4, '0');
-        } catch (err) {
-          if (
-            offlineSyncEnabled &&
-            isNetworkError(err)
-          ) {
-            break;
-          }
-          throw err;
-        }
-      }
-
-      setBillId(candidate);
-
+      // Offline: no server to allocate a real sequential number from, so
+      // this is only ever a local, throwaway reference shown on the
+      // "OFFLINE — PENDING SYNC" receipt — the real "INV-dddd" invoice
+      // number is assigned once this sale actually syncs (see
+      // lib/offlineSync.js's allocateOrderId). Not shown to the cashier
+      // as "the" invoice number for that reason.
       if (offlineSyncEnabled && !isOnline) {
+        const localPlaceholder =
+          '#' +
+          Math.floor(Math.random() * 10000)
+            .toString()
+            .padStart(4, '0');
+
+        setBillId(localPlaceholder);
         setView('preview');
         return;
       }
 
+      // Online: the real, sequential invoice number — allocated once,
+      // atomically, server-side (lib/orderId.js). No more client-side
+      // guessing/retry loop.
+      const { invoiceId } = await api.nextInvoiceId();
+
+      setBillId(invoiceId);
+
       await saveDraftNow(
         undefined,
         undefined,
-        candidate
+        invoiceId
       );
 
       setView('preview');
@@ -689,7 +698,8 @@ export default function Billing() {
     savedOrder = null,
     receiptItems = null,
     receiptCustomer = null,
-    receiptBillId = null
+    receiptBillId = null,
+    receiptOldBalance = null
   ) => {
     const itemsSource = receiptItems || Object.values(billingItems);
     const customerName = receiptCustomer || customer;
@@ -707,6 +717,22 @@ export default function Billing() {
     const settlementAmount = formatMoney(
       Math.abs(paidNum - total)
     );
+
+    // Account balance block (Old/Total/Cash Received/Net Balance) only
+    // applies to a real, on-file customer — never Walk-in — and only
+    // when the caller actually resolved a pre-sale balance for them.
+    // receiptOldBalance is the customer's signed accountBalance as it
+    // stood *before* this sale (positive = owed, negative = credit).
+    const showAccountBalance =
+      customerName !== WALKIN_CUSTOMER &&
+      receiptOldBalance !== null &&
+      receiptOldBalance !== undefined;
+
+    const oldBalanceNum = showAccountBalance
+      ? roundMoney(receiptOldBalance)
+      : 0;
+    const totalBalanceNum = roundMoney(oldBalanceNum + total);
+    const netBalanceNum = roundMoney(totalBalanceNum - paidNum);
 
     const items = itemsSource.map((item) => {
       const subtotal = roundMoney(
@@ -753,6 +779,11 @@ export default function Billing() {
         settlementLabel,
         settlementAmountLabel: settlementAmount,
         customer: customerName,
+        showAccountBalance,
+        oldBalanceLabel: formatMoney(oldBalanceNum),
+        totalBalanceLabel: formatMoney(totalBalanceNum),
+        cashReceivedLabel: formatMoney(paidNum),
+        netBalanceLabel: formatMoney(netBalanceNum),
       });
 
       if (printed) {
@@ -780,12 +811,17 @@ export default function Billing() {
       paidLabel: formatMoney(paidNum),
       settlementLabel,
       settlementAmountLabel: settlementAmount,
+      showAccountBalance,
+      oldBalanceLabel: formatMoney(oldBalanceNum),
+      totalBalanceLabel: formatMoney(totalBalanceNum),
+      cashReceivedLabel: formatMoney(paidNum),
+      netBalanceLabel: formatMoney(netBalanceNum),
     });
 
     printReceipt(html);
   };
 
-  const handleGenerateBill = async () => {
+  const handleGenerateBill = guardGenerateBill(async () => {
     const total = grandTotal;
     const paidNum = parseFloat(paid) || 0;
     const receiptItems = Object.values(billingItems).map((item) => ({
@@ -882,6 +918,14 @@ export default function Billing() {
         return;
       }
 
+      // data.customer is the customer document as it stood *before*
+      // this order was applied (routes/billing.js reads it ahead of the
+      // transaction) — exactly the "old balance" the receipt needs.
+      // null for a Walk-in sale, which has no Customer document.
+      const oldBalance = data.customer
+        ? data.customer.accountBalance
+        : null;
+
       await printReceiptFor(
         total,
         paidNum,
@@ -890,7 +934,8 @@ export default function Billing() {
         data.order,
         receiptItems,
         receiptCustomer,
-        receiptBillId
+        receiptBillId,
+        oldBalance
       );
 
       toast.success(
@@ -924,6 +969,18 @@ export default function Billing() {
               new Date().toISOString(),
           });
 
+          // Offline: no server round-trip to get a fresh pre-sale
+          // balance, so fall back to the locally cached directory
+          // (last value synced from the server this session).
+          const cachedCustomer =
+            customerDirectory[receiptCustomer];
+          const offlineOldBalance = cachedCustomer
+            ? roundMoney(
+              (cachedCustomer.totalBalanceDue || 0) -
+              (cachedCustomer.creditBalance || 0)
+            )
+            : null;
+
           await printReceiptFor(
             total,
             paidNum,
@@ -932,7 +989,8 @@ export default function Billing() {
             null,
             receiptItems,
             receiptCustomer,
-            receiptBillId
+            receiptBillId,
+            offlineOldBalance
           );
 
           toast.success(
@@ -955,7 +1013,7 @@ export default function Billing() {
         'Error saving order: ' + err.message
       );
     }
-  };
+  });
 
   const handleCustomerSelect = (value) => {
     if (value === 'New Customer') {
@@ -1227,17 +1285,18 @@ export default function Billing() {
                               </td>
 
                               <td className="p-2">
-                                {formatMoney(
-                                  product.price ??
-                                  0
+                                {product.price == null ? (
+                                  <span className="text-gray-400">—</span>
+                                ) : (
+                                  formatMoney(product.price)
                                 )}
                               </td>
 
                               <td className="p-2">
-                                {formatMoney(
-                                  (product.price ??
-                                    0) *
-                                  available
+                                {product.price == null ? (
+                                  <span className="text-gray-400">—</span>
+                                ) : (
+                                  formatMoney(product.price * available)
                                 )}
                               </td>
                             </tr>
@@ -1381,9 +1440,10 @@ export default function Billing() {
                       onClick={
                         handleAddToBill
                       }
-                      className="bg-brand-green text-white px-4 py-2 rounded-lg shadow hover:bg-green-700"
+                      disabled={addingToBill}
+                      className="bg-brand-green text-white px-4 py-2 rounded-lg shadow hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      Add to Bill
+                      {addingToBill ? 'Adding…' : 'Add to Bill'}
                     </button>
 
                     <button
@@ -1636,9 +1696,10 @@ export default function Billing() {
                   onClick={
                     handleGenerateBill
                   }
-                  className="w-full py-2 bg-brand text-white rounded-lg shadow hover:bg-blue-700"
+                  disabled={generatingBill}
+                  className="w-full py-2 bg-brand text-white rounded-lg shadow hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  Generate Bill
+                  {generatingBill ? 'Generating…' : 'Generate Bill'}
                 </button>
 
                 <div className="flex space-x-2">

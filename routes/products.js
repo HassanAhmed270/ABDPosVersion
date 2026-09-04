@@ -98,7 +98,11 @@ router.get('/api/products', requireAuth, asyncHandler(async (req, res) => {
       supplierId: p.supplierID?._id || null,
       supplierName: p.supplierID?.supplierName || null,
       sellingPriceHistory: p.sellingPriceHistory,
-      price: roundMoney(getLatestSellingPrice(p)),
+      // null means genuinely unset — do not round/coerce to 0. Every
+      // consumer of `price` (Products/Billing tables, receipts, the
+      // edit form's "Previous:" hint) must render null as blank, never
+      // as Rs 0.00.
+      price: getLatestSellingPrice(p) === null ? null : roundMoney(getLatestSellingPrice(p)),
       costPrice: roundMoney(getLatestBuyingPrice(p)),
     };
   });
@@ -169,7 +173,19 @@ router.post('/api/product', requireAuth, requireAdmin, asyncHandler(async (req, 
   // Example: "  Coca   Cola  " -> "Coca Cola"
   const normalizedProductName = productName.trim().replace(/\s+/g, ' ');
 
-  const submittedPrice = roundMoney(price);
+  // Selling price is optional — blank/omitted means "no selling price",
+  // not "$0". Only validate/round when something was actually submitted;
+  // hasPrice=false is what lets Update Product explicitly clear a
+  // previously-set price (see the update branch below), same pattern as
+  // POST /supplier/purchase's optional per-item sellingPrice.
+  const hasPrice = price !== undefined && price !== null && price !== '';
+  if (hasPrice && (!Number.isFinite(Number(price)) || Number(price) < 0)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid selling price.'
+    });
+  }
+  const submittedPrice = hasPrice ? roundMoney(price) : null;
   const threshold = parseThreshold(lowStockThreshold);
   const existingProduct = productId
     ? await Product.findOne({ productID: productId })
@@ -247,14 +263,29 @@ router.post('/api/product', requireAuth, requireAdmin, asyncHandler(async (req, 
 
     // Only record a new price-history entry if the price actually moved —
     // this is what makes getLatestSellingPrice() meaningful instead of the
-    // array just growing with the same number forever.
-    const latestPrice = roundMoney(
-      getLatestSellingPrice(existingProduct)
-    );
+    // array just growing with the same number forever. latestPrice is
+    // null when no price is currently set (never 0), so it's compared
+    // directly against submittedPrice (also null when the field was left
+    // blank this submit) rather than being coerced through roundMoney.
+    const latestPrice = getLatestSellingPrice(existingProduct);
 
-    if (submittedPrice > 0 && submittedPrice !== latestPrice) {
+    if (hasPrice) {
+      // A real price was submitted — record it if it's new or different
+      // from whatever's currently set (including "currently unset").
+      if (latestPrice === null || submittedPrice !== latestPrice) {
+        existingProduct.sellingPriceHistory.push({
+          price: submittedPrice,
+          date: new Date()
+        });
+      }
+    } else if (latestPrice !== null) {
+      // The field was explicitly left blank on this submit and a price
+      // was previously set — record the clear as its own history entry
+      // rather than silently dropping it, so getLatestSellingPrice()
+      // (sorted by date) correctly reports "unset" from here on, and the
+      // audit trail/price history still shows when and that it happened.
       existingProduct.sellingPriceHistory.push({
-        price: submittedPrice,
+        price: null,
         date: new Date()
       });
     }
@@ -284,11 +315,17 @@ router.post('/api/product', requireAuth, requireAdmin, asyncHandler(async (req, 
       productID: generatedProductId,
       productName: normalizedProductName,
       category,
-      sellingPriceHistory: [
-        {
-          price: submittedPrice
-        }
-      ],
+      // hasPrice=false (blank at creation) means genuinely no price
+      // recorded — an empty array, not a [{price: 0}] or [{price: null}]
+      // entry — so a brand-new product with no selling price entered
+      // yet has no history to sort through at all.
+      sellingPriceHistory: hasPrice
+        ? [
+            {
+              price: submittedPrice
+            }
+          ]
+        : [],
 
       // Stage 7: a real cost basis from the moment the product exists,
       // same buyingPriceHistory shape POST /supplier/purchase writes —
@@ -621,7 +658,7 @@ router.post('/product/undo', requireAuth, requireAdmin, asyncHandler(async (req,
   if (existingProduct) {
     existingProduct.productName = productName;
     existingProduct.category = category;
-    existingProduct.sellingPriceHistory = [{ price: roundMoney(price) }];
+    existingProduct.sellingPriceHistory = [{ price: price === null || price === undefined || price === '' ? null : roundMoney(price) }];
     existingProduct.quantity = isNaN(parseInt(stock)) ? 0 : parseInt(stock);
     existingProduct.reserved = 0; // a restored product starts with nothing held in any open cart
     existingProduct.lowStockThreshold = threshold;
@@ -633,7 +670,7 @@ router.post('/product/undo', requireAuth, requireAdmin, asyncHandler(async (req,
       productID: productId,
       productName,
       category,
-      sellingPriceHistory: [{ price: roundMoney(price) }],
+      sellingPriceHistory: [{ price: price === null || price === undefined || price === '' ? null : roundMoney(price) }],
       quantity: isNaN(parseInt(stock)) ? 0 : parseInt(stock),
       reserved: 0,
       lowStockThreshold: threshold,

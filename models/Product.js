@@ -21,9 +21,16 @@ const productSchema = new Schema({
   // What we charge customers, over time — always read via
   // getLatestSellingPrice() (lib/pricing.js), never index [0].
   // Replaces the old, ambiguously-named `unitPrice` field (Stage 5).
+  // A selling price is genuinely optional: `price: null` is a valid,
+  // explicit entry meaning "no selling price set as of this date" (the
+  // product was created/edited with it deliberately left blank, or an
+  // admin cleared a previously-set price). This is distinct from an
+  // empty array (no price ever recorded). getLatestSellingPrice() treats
+  // both cases as "unset" and returns null — never 0 — so a blank price
+  // is never silently mistaken for a real $0 price anywhere it's read.
   sellingPriceHistory: [
     {
-      price: { type: Number, required: true },
+      price: { type: Number, required: false, default: null },
       date: { type: Date, default: Date.now }
     }
   ],

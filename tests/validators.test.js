@@ -59,13 +59,21 @@ test('isValidProductId rejects malformed ids', () => {
   assert.equal(isValidProductId(1), false);
 });
 
-test('isValidOrderId accepts the #0000 format', () => {
+test('isValidOrderId accepts the current INV-0000 format', () => {
+  assert.equal(isValidOrderId('INV-0001'), true);
+  // Never truncated past 4 digits once the counter grows.
+  assert.equal(isValidOrderId('INV-10000'), true);
+});
+
+test('isValidOrderId still accepts legacy #0000 orders already on file', () => {
   assert.equal(isValidOrderId('#1234'), true);
 });
 
 test('isValidOrderId rejects malformed ids', () => {
   assert.equal(isValidOrderId('1234'), false);
   assert.equal(isValidOrderId('#abcd'), false);
+  assert.equal(isValidOrderId('INV-abcd'), false);
+  assert.equal(isValidOrderId('INV-123'), false);
   assert.equal(isValidOrderId(null), false);
 });
 

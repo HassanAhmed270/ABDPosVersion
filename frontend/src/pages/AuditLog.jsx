@@ -13,6 +13,12 @@ const DATE_KEY_RE = /date|At$/i;
 const HIDDEN_KEY_RE = /^(?:_id|__v|createdAt|updatedAt|deletedAt|batchId)$/i;
 
 function formatFieldValue(key, value) {
+  // A money-ish field explicitly set to null (e.g. a cleared selling
+  // price) is meaningfully different from the field simply not existing
+  // on one side of the diff — surface it instead of treating it as
+  // "nothing to show", or a cleared price silently vanishes from the
+  // audit trail instead of being recorded as its own event.
+  if (value === null && MONEY_KEY_RE.test(key)) return 'Not set';
   if (value === undefined || value === null || value === '') return '';
   if (MONEY_KEY_RE.test(key) && typeof value === 'number') return formatMoney(value);
   if (DATE_KEY_RE.test(key) && !isNaN(Date.parse(value))) return new Date(value).toLocaleString();

@@ -5,7 +5,9 @@ const orderSchema = new Schema({
   orderID: {
     type: String,
     required: true,
-    match: /^#\d{4}$/,
+    // Accepts current "INV-dddd+" (lib/orderId.js) and legacy random
+    // "#dddd" orders already on file — see lib/validators.js.
+    match: /^(?:INV-\d{4,}|#\d{4})$/,
     unique: true
   },
   customerName: { type: String, required: true },

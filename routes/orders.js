@@ -200,7 +200,10 @@ async function applyLineAddition(order, productID, quantity, reason, editedBy, s
     throw new AppError(400, `Product ${productID} does not exist.`);
   }
 
-  const currentPrice = getLatestSellingPrice(product);
+  // No catalog price set is treated the same as this admin edit flow has
+  // always treated it — falls back to 0 rather than propagating null into
+  // the money math (roundMoney(null * n) would rely on NaN coercion).
+  const currentPrice = getLatestSellingPrice(product) ?? 0;
   const amount = roundMoney(currentPrice * quantity);
 
   const updated = await Product.findOneAndUpdate(

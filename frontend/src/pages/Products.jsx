@@ -10,6 +10,7 @@ import { useDebouncedValue } from '../lib/useDebouncedValue';
 import { useAuth } from '../lib/AuthContext';
 import { useConfirm } from '../components/ConfirmDialog';
 import { useNavigate } from 'react-router-dom';
+import { useSubmitGuard } from '../lib/useSubmitGuard';
 
 const NO_SUPPLIER = 'NoSupplier';
 
@@ -94,6 +95,13 @@ export default function Products() {
   const [showUndo, setShowUndo] = useState(false);
 
   const [stockSource, setStockSource] = useState('self');
+
+  // Prevent double-clicks from saving/adjusting stock twice — each of
+  // these mutates quantity and/or cost, so a duplicate submit means a
+  // duplicate stock change (see lib/useSubmitGuard.js).
+  const { submitting: savingProduct, guard: guardSaveProduct } = useSubmitGuard();
+  const { submitting: addingStock, guard: guardAddStock } = useSubmitGuard();
+  const { submitting: deductingStock, guard: guardDeductStock } = useSubmitGuard();
 
   const loadProducts = async () => {
     setLoading(true);
@@ -234,7 +242,7 @@ export default function Products() {
     );
   };
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = guardSaveProduct(async (e) => {
     e.preventDefault();
 
     if ((mode === 'update' && !form.productId) || !form.productName) {
@@ -266,9 +274,9 @@ export default function Products() {
     } catch (err) {
       toast.error('Error saving product: ' + err.message);
     }
-  };
+  });
 
-  const handleAddStockSubmit = async (e) => {
+  const handleAddStockSubmit = guardAddStock(async (e) => {
     e.preventDefault();
 
     /*
@@ -313,9 +321,9 @@ export default function Products() {
     } catch (err) {
       toast.error('Failed to add stock: ' + err.message);
     }
-  };
+  });
 
-  const handleDeductStockSubmit = async (e) => {
+  const handleDeductStockSubmit = guardDeductStock(async (e) => {
     e.preventDefault();
 
     const qty = parseInt(deductForm.quantity);
@@ -388,7 +396,7 @@ export default function Products() {
     } catch (err) {
       toast.error('Failed to deduct stock: ' + err.message);
     }
-  };
+  });
 
   const handleDeleteClick = (p) => {
     if (p.quantity > 0) {
@@ -405,7 +413,10 @@ export default function Products() {
       productId: p.productID,
       productName: p.productName,
       category: p.category,
-      price: p.price ?? 0,
+      // Preserve "no selling price" through delete → undo — don't
+      // coerce a genuinely unset price to 0 here, or restoring the
+      // product would give it a real Rs 0 price it never had.
+      price: p.price ?? '',
       supplierId: p.supplierId || NO_SUPPLIER,
       lowStockThreshold: p.lowStockThreshold ?? 10,
       reason: '',
@@ -621,7 +632,11 @@ export default function Products() {
                               </td>
 
                               <td className="py-2 px-3">
-                                {formatMoney(p.price ?? 0)}
+                                {p.price == null ? (
+                                  <span className="text-gray-400">—</span>
+                                ) : (
+                                  formatMoney(p.price)
+                                )}
                               </td>
 
                               <td
@@ -793,16 +808,16 @@ export default function Products() {
                       >
                         <div>
                           <label className="block mb-1 font-medium">
-                            Selling Price
+                            Retail Price
                           </label>
 
                           {isAdmin && mode === 'update' && (
                             <p className="text-xs text-gray-500 mb-1">
                               Previous:{' '}
                               <span className="font-medium text-gray-700">
-                                {formatMoney(
-                                  previousPrice ?? 0
-                                )}
+                                {previousPrice == null
+                                  ? 'Not set'
+                                  : formatMoney(previousPrice)}
                               </span>
                             </p>
                           )}
@@ -818,9 +833,10 @@ export default function Products() {
                                 price: e.target.value,
                               })
                             }
-                            placeholder="Enter selling price"
+                            placeholder="Optional"
                             className="border rounded px-3 py-2 w-full"
                           />
+                         
                         </div>
 
                         {mode === 'add' && (
@@ -961,14 +977,17 @@ export default function Products() {
                       <div className="flex gap-2">
                         <button
                           type="submit"
-                          className={`px-4 py-2 text-white rounded ${mode === 'add'
+                          disabled={savingProduct}
+                          className={`px-4 py-2 text-white rounded disabled:opacity-50 disabled:cursor-not-allowed ${mode === 'add'
                               ? 'bg-blue-600 hover:bg-blue-700'
                               : 'bg-yellow-600 hover:bg-yellow-700'
                             }`}
                         >
-                          {mode === 'add'
-                            ? 'Add Product'
-                            : 'Update Product'}
+                          {savingProduct
+                            ? 'Saving…'
+                            : mode === 'add'
+                              ? 'Add Product'
+                              : 'Update Product'}
                         </button>
 
                         {mode === 'update' && (
@@ -1118,9 +1137,10 @@ export default function Products() {
                         <div className="flex gap-2">
                           <button
                             type="submit"
-                            className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
+                            disabled={addingStock}
+                            className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
-                            Add Stock
+                            {addingStock ? 'Adding…' : 'Add Stock'}
                           </button>
 
                           <button
@@ -1374,9 +1394,10 @@ export default function Products() {
                     <div className="flex gap-2">
                       <button
                         type="submit"
-                        className="px-4 py-2 bg-orange-600 text-white rounded hover:bg-orange-700"
+                        disabled={deductingStock}
+                        className="px-4 py-2 bg-orange-600 text-white rounded hover:bg-orange-700 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
-                        Deduct Stock
+                        {deductingStock ? 'Deducting…' : 'Deduct Stock'}
                       </button>
 
                       <button

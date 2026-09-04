@@ -2,11 +2,21 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { getLatestSellingPrice, getLatestBuyingPrice } = require('../lib/pricing');
 
-test('getLatestSellingPrice returns 0 for missing/empty history', () => {
-  assert.equal(getLatestSellingPrice({}), 0);
-  assert.equal(getLatestSellingPrice({ sellingPriceHistory: [] }), 0);
-  assert.equal(getLatestSellingPrice(null), 0);
-  assert.equal(getLatestSellingPrice(undefined), 0);
+test('getLatestSellingPrice returns null (not 0) for missing/empty history', () => {
+  assert.equal(getLatestSellingPrice({}), null);
+  assert.equal(getLatestSellingPrice({ sellingPriceHistory: [] }), null);
+  assert.equal(getLatestSellingPrice(null), null);
+  assert.equal(getLatestSellingPrice(undefined), null);
+});
+
+test('getLatestSellingPrice returns null when the most recent entry was an explicit clear', () => {
+  const product = {
+    sellingPriceHistory: [
+      { price: 100, date: '2026-01-01' },
+      { price: null, date: '2026-02-01' }
+    ]
+  };
+  assert.equal(getLatestSellingPrice(product), null);
 });
 
 test('getLatestSellingPrice returns the only entry for a single-entry history', () => {

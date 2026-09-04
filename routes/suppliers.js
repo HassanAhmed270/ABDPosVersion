@@ -15,32 +15,36 @@ const { logAudit } = require('../lib/auditLog');
 const { isValidProductId, isValidEmail, isValidPhone } = require('../lib/validators');
 
 const router = express.Router();
-
-// Stage 20: the sentinel supplier value for stock the business bought
-// itself, with no external supplier involved — see CLAUDE.md Stage 20.
 const NO_SUPPLIER = 'NoSupplier';
-
-// ── Suppliers & purchases (Stage 5) ─────────────────────────
-// Mirrors the Customer/Order relationship, but for the other side of the
-// ledger: what we owe suppliers instead of what customers owe us.
-
-
-// ── Suppliers & purchases (Stage 5) ─────────────────────────
-// Mirrors the Customer/Order relationship, but for the other side of the
-// ledger: what we owe suppliers instead of what customers owe us.
 
 router.get('/api/suppliers', requireAuth, asyncHandler(async (req, res) => {
   const { search = '', sortBy = 'supplierName', sortDir = 'asc' } = req.query;
   const { page, limit } = parsePagination(req.query);
 
   const filter = search
-    ? {
+  ? {
       $or: [
-        { supplierName: { $regex: escapeRegex(search), $options: 'i' } },
-        { contactPerson: { $regex: escapeRegex(search), $options: 'i' } },
+        {
+          supplierName: {
+            $regex: escapeRegex(search),
+            $options: 'i',
+          },
+        },
+        {
+          contactPerson: {
+            $regex: escapeRegex(search),
+            $options: 'i',
+          },
+        },
+        {
+          'purchases.billID': {
+            $regex: escapeRegex(search),
+            $options: 'i',
+          },
+        },
       ],
     }
-    : {};
+  : {};
 
   const suppliers = await Supplier.find(filter);
   const mapped = suppliers.map((s) => ({
@@ -74,6 +78,7 @@ router.post('/api/supplier', requireAuth, requireAdmin, asyncHandler(async (req,
     email,
     address,
     amountPaid,
+    billID,
   } = req.body;
 
   if (!supplierName || !supplierName.trim()) {
@@ -376,11 +381,15 @@ router.delete('/supplier/:supplierName', requireAuth, requireAdmin, asyncHandler
 // purchase's own balanceDue still never goes negative — the credit lives
 // on the supplier document, not as a negative number on one purchase.
 router.post('/supplier/purchase', requireAuth, asyncHandler(async (req, res) => {
-  const { supplierName, items, amountPaid } = req.body;
+  const { supplierName, items, amountPaid ,billID} = req.body;
 
   if (!supplierName || !supplierName.trim() || supplierName === NO_SUPPLIER) {
     return res.status(400).json({ success: false, message: 'Supplier is required.' });
   }
+  const cleanBillID =
+  billID !== undefined && billID !== null
+    ? String(billID).trim()
+    : '';
   if (!Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ success: false, message: 'No items in this purchase.' });
   }
@@ -460,7 +469,10 @@ router.post('/supplier/purchase', requireAuth, asyncHandler(async (req, res) => 
         // move" guard POST /api/product uses. buyingPriceHistory (above)
         // is completely separate and always updates regardless.
         if (item.sellingPrice !== undefined) {
-          const currentSellingPrice = roundMoney(getLatestSellingPrice(product));
+          // getLatestSellingPrice may be null (no price set yet) — compare
+          // directly rather than routing null through roundMoney(), which
+          // would silently turn "unset" into 0 and mask a real change.
+          const currentSellingPrice = getLatestSellingPrice(product);
           if (item.sellingPrice > 0 && item.sellingPrice !== currentSellingPrice) {
             product.sellingPriceHistory.push({ price: item.sellingPrice, date: new Date() });
           }
@@ -510,7 +522,7 @@ router.post('/supplier/purchase', requireAuth, asyncHandler(async (req, res) => 
         { _id: supplier._id },
         {
           $set: { creditBalance: newCreditBalance },
-          $push: { purchases: { purchaseID, totalAmount, amountPaid: paid, balanceDue, creditApplied, creditGenerated, items: cleanItems } },
+          $push: { purchases: { purchaseID, billID: cleanBillID, totalAmount, amountPaid: paid, balanceDue, creditApplied, creditGenerated, items: cleanItems } },
         },
         { session }
       );
@@ -524,6 +536,7 @@ router.post('/supplier/purchase', requireAuth, asyncHandler(async (req, res) => 
           before: null,
           after: {
             purchaseID,
+            billID: cleanBillID,
             supplierName: supplier.supplierName,
             items: cleanItems,
             totalAmount,
@@ -541,17 +554,18 @@ router.post('/supplier/purchase', requireAuth, asyncHandler(async (req, res) => 
     await session.endSession();
   }
 
-  res.status(201).json({
-    success: true,
-    message: 'Purchase recorded and stock updated.',
-    purchaseID,
-    totalAmount,
-    amountPaid: paid,
-    balanceDue,
-    creditApplied,
-    creditGenerated,
-    creditBalance: newCreditBalance,
-  });
+ res.status(201).json({
+  success: true,
+  message: 'Purchase recorded and stock updated.',
+  purchaseID,
+  billID: cleanBillID,
+  totalAmount,
+  amountPaid: paid,
+  balanceDue,
+  creditApplied,
+  creditGenerated,
+  creditBalance: newCreditBalance,
+});
 }));
 
 module.exports = router;

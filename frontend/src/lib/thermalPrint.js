@@ -110,9 +110,18 @@ function buildEscPosReceipt(data) {
 
   line('-'.repeat(LINE_WIDTH));
   if (data.discountLabel) line(padLine('Discount', `-${data.discountLabel}`));
-  line(padLine('Grand Total', data.totalLabel));
-  line(padLine('Paid', data.paidLabel));
-  line(padLine(data.settlementLabel, data.settlementAmountLabel));
+  line(padLine(data.showAccountBalance ? 'Total' : 'Grand Total', data.totalLabel));
+
+  if (data.showAccountBalance) {
+    line(padLine('Old Balance', data.oldBalanceLabel));
+    line(padLine('Total Balance', data.totalBalanceLabel));
+    line(padLine('Cash Received', data.cashReceivedLabel));
+    line(padLine('Net Balance', data.netBalanceLabel));
+  } else {
+    line(padLine('Paid', data.paidLabel));
+    line(padLine(data.settlementLabel, data.settlementAmountLabel));
+  }
+
   line('-'.repeat(LINE_WIDTH));
   line(`Customer: ${data.customer}`);
   chunks.push(new Uint8Array([0x0a, 0x0a, 0x0a, 0x0a]));

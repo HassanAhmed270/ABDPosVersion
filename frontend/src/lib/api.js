@@ -100,11 +100,18 @@ export const api = {
   getCustomers: (params = {}) => request(`/api/customers?${new URLSearchParams(params)}`),
   addCustomer: (payload) => request('/billing/addCustomer', { method: 'POST', body: JSON.stringify(payload) }),
   updateCustomer: (payload) => request('/customer/updateCustomer', { method: 'POST', body: JSON.stringify(payload) }),
+  // History of PINV-#### balance-payment receipts for one customer —
+  // powers the "Payment History" list + reprint on the Customers page.
+  getPaymentInvoices: (customerName) => request(`/customer/paymentInvoices?${new URLSearchParams({ customerName })}`),
   deleteCustomer: (customerName) => request('/customer/deleteCustomer', { method: 'POST', body: JSON.stringify({ customerName }) }),
   undoCustomer: (payload) => request('/customer/undoCustomer', { method: 'POST', body: JSON.stringify(payload) }),
 
   // Billing / orders
   getUniqueOrderId: (billId) => request('/billing/orderid', { method: 'POST', body: JSON.stringify({ billId }) }),
+  // Allocates the next sequential "INV-0001", "INV-0002", ... invoice
+  // number (server-side, atomic — see lib/orderId.js). Called once per
+  // bill, from handlePreview.
+  nextInvoiceId: () => request('/billing/nextInvoiceId', { method: 'POST' }),
   // NOTE: no payload — the server commits from the cashier's persisted
   // draft (POST /billing/draft), not from anything sent here. See
   // CLAUDE.md Stage 4.

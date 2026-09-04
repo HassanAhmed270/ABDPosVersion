@@ -99,6 +99,13 @@ export function printReceipt(html) {
             text-align: center;
           }
 
+          .receipt .doc-title {
+            text-align: center;
+            font-weight: bold;
+            margin: 4px 0;
+            letter-spacing: 0.5px;
+          }
+
           .receipt .sep {
             border: none;
             border-top: 1px dashed #000;
@@ -274,7 +281,12 @@ export function buildReceiptHtml({
   grandTotalLabel,
   paidLabel,
   settlementLabel,
-  settlementAmountLabel
+  settlementAmountLabel,
+  showAccountBalance,
+  oldBalanceLabel,
+  totalBalanceLabel,
+  cashReceivedLabel,
+  netBalanceLabel
 }) {
   const now = new Date();
 
@@ -352,18 +364,109 @@ export function buildReceiptHtml({
       <hr class="sep" />
 
       <div class="totals-row grand">
-        <span>Grand Total</span>
+        <span>${showAccountBalance ? 'Total' : 'Grand Total'}</span>
         <span>${formatReceiptMoney(grandTotalLabel)}</span>
       </div>
 
+      ${
+        showAccountBalance
+          ? `
+        <div class="totals-row">
+          <span>Old Balance</span>
+          <span>${formatReceiptMoney(oldBalanceLabel)}</span>
+        </div>
+
+        <div class="totals-row">
+          <span>Total Balance</span>
+          <span>${formatReceiptMoney(totalBalanceLabel)}</span>
+        </div>
+
+        <div class="totals-row">
+          <span>Cash Received</span>
+          <span>${formatReceiptMoney(cashReceivedLabel)}</span>
+        </div>
+
+        <div class="totals-row grand">
+          <span>Net Balance</span>
+          <span>${formatReceiptMoney(netBalanceLabel)}</span>
+        </div>
+      `
+          : `
+        <div class="totals-row">
+          <span>Paid</span>
+          <span>${formatReceiptMoney(paidLabel)}</span>
+        </div>
+
+        <div class="totals-row">
+          <span>${settlementLabel}</span>
+          <span>${formatReceiptMoney(settlementAmountLabel)}</span>
+        </div>
+      `
+      }
+
+      <hr class="sep-solid" />
+
+      <div class="footer">
+        THANK YOU! VISIT AGAIN
+      </div>
+    </div>
+  `;
+}
+
+// A customer's balance-payment receipt (POST /customer/updateCustomer,
+// via routes/customers.js's PaymentInvoice.create) — same paper/style
+// as buildReceiptHtml's sales bill, but no items table: just the
+// balance movement itself. `date` lets a later reprint (Customers.jsx's
+// payment-history list) show the payment's actual original timestamp
+// rather than "now".
+export function buildPaymentInvoiceHtml({
+  shopName,
+  shopAddress,
+  shopPhone,
+  invoiceNumber,
+  customerName,
+  oldBalanceLabel,
+  paidLabel,
+  newBalanceLabel,
+  date
+}) {
+  const when = date ? new Date(date) : new Date();
+
+  return `
+    <div class="receipt">
+      <div class="shop-name">${shopName}</div>
+      <div class="shop-line">${shopAddress}</div>
+      <div class="shop-line">Phone: ${shopPhone}</div>
+      <div class="doc-title">PAYMENT RECEIPT</div>
+
+      <hr class="sep-solid" />
+
+      <div class="meta-row">
+        <span>Invoice: ${invoiceNumber}</span>
+        <span>${formatReceiptDate(when)}</span>
+      </div>
+
+      <div class="meta-row">
+        <span>Time: ${formatReceiptTime(when)}</span>
+      </div>
+
+      <div>Customer Name: ${customerName}</div>
+
+      <hr class="sep" />
+
       <div class="totals-row">
-        <span>Paid</span>
-        <span>${formatReceiptMoney(paidLabel)}</span>
+        <span>Old Balance</span>
+        <span>${formatReceiptMoney(oldBalanceLabel)}</span>
       </div>
 
       <div class="totals-row">
-        <span>${settlementLabel}</span>
-        <span>${formatReceiptMoney(settlementAmountLabel)}</span>
+        <span>Paid Amount</span>
+        <span>${formatReceiptMoney(paidLabel)}</span>
+      </div>
+
+      <div class="totals-row grand">
+        <span>Balance Left</span>
+        <span>${formatReceiptMoney(newBalanceLabel)}</span>
       </div>
 
       <hr class="sep-solid" />

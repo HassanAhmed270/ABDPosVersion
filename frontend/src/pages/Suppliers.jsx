@@ -21,6 +21,7 @@ const emptySupplierForm = {
 
 const emptyPurchaseForm = {
   supplierName: '',
+  billID: '',
   productId: '',
   quantity: '',
   unitCost: '',
@@ -63,12 +64,12 @@ export default function Suppliers() {
 
   const previousSellingPrice = selectedPurchaseProduct?.price ?? null;
 
-  const autoFilledPaid = useRef('');
+  const amountPaidManualRef = useRef(false);
 
   const editingSupplier = editingSupplierName
     ? allSuppliers.find(
-        (s) => s.supplierName === editingSupplierName
-      )
+      (s) => s.supplierName === editingSupplierName
+    )
     : null;
 
   const editingSupplierBalance = roundMoney(
@@ -78,41 +79,29 @@ export default function Suppliers() {
   const canAdjustSupplierBalance = editingSupplierBalance > 0;
 
   useEffect(() => {
-    const qty = parseInt(purchaseForm.quantity);
+    if (amountPaidManualRef.current) return;
+
+    const qty = parseInt(purchaseForm.quantity, 10);
     const cost = parseFloat(purchaseForm.unitCost);
 
     const computedTotal =
       Number.isInteger(qty) &&
-      qty > 0 &&
-      Number.isFinite(cost) &&
-      cost >= 0
+        qty > 0 &&
+        Number.isFinite(cost) &&
+        cost >= 0
         ? roundMoney(qty * cost)
         : '';
 
-    setPurchaseForm((prev) => {
-      if (
-        prev.amountPaid !== '' &&
-        prev.amountPaid !== autoFilledPaid.current
-      ) {
-        return prev;
-      }
-
-      autoFilledPaid.current =
-        computedTotal === '' ? '' : String(computedTotal);
-
-      return {
-        ...prev,
-        amountPaid: autoFilledPaid.current,
-      };
-    });
-
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setPurchaseForm((prev) => ({
+      ...prev,
+      amountPaid: computedTotal === '' ? '' : String(computedTotal),
+    }));
   }, [purchaseForm.quantity, purchaseForm.unitCost]);
 
   const selectedSupplierCredit = purchaseForm.supplierName
     ? allSuppliers.find(
-        (s) => s.supplierName === purchaseForm.supplierName
-      )?.creditBalance ?? 0
+      (s) => s.supplierName === purchaseForm.supplierName
+    )?.creditBalance ?? 0
     : 0;
 
   const loadSuppliers = async () => {
@@ -376,7 +365,7 @@ export default function Suppliers() {
 
       if (isNaN(sp) || sp < 0) {
         toast.error(
-          'Selling price must be a valid non-negative number, or left blank to leave it unchanged.'
+          'Retail price Optional'
         );
         return;
       }
@@ -385,17 +374,15 @@ export default function Suppliers() {
     try {
       const data = await api.recordPurchase({
         supplierName,
-        items: [
-          {
-            productID: productId,
-            quantity: qty,
-            unitCost: cost,
-            ...(sp !== undefined ? { sellingPrice: sp } : {}),
-          },
-        ],
+        billID: purchaseForm.billID.trim(),
+        items: [{
+          productID: productId,
+          quantity: qty,
+          unitCost: cost,
+          ...(sp !== undefined ? { sellingPrice: sp } : {}),
+        }],
         amountPaid: parseFloat(amountPaid) || 0,
-      });
-
+      })
       const lines = [
         `Purchase ${data.purchaseID} recorded.`,
       ];
@@ -430,7 +417,7 @@ export default function Suppliers() {
 
       toast.success(lines.join(' '));
 
-      autoFilledPaid.current = '';
+      amountPaidManualRef.current = false;
       setPurchaseForm(emptyPurchaseForm);
 
       await reloadEverything();
@@ -462,9 +449,8 @@ export default function Suppliers() {
           <div className="bg-white border rounded-lg w-full">
             <div className="flex flex-col lg:flex-row">
               <div
-                className={`w-full ${
-                  isAdmin ? 'lg:w-2/3' : ''
-                } flex flex-col overflow-x-auto`}
+                className={`w-full ${isAdmin ? 'lg:w-2/3' : ''
+                  } flex flex-col overflow-x-auto`}
               >
                 <table className="w-full min-w-[640px] text-sm">
                   <thead>
@@ -539,11 +525,10 @@ export default function Suppliers() {
                                   : s.supplierName
                               )
                             }
-                            className={`border-b hover:bg-gray-50 cursor-pointer ${
-                              expandedName === s.supplierName
-                                ? 'bg-blue-50'
-                                : ''
-                            }`}
+                            className={`border-b hover:bg-gray-50 cursor-pointer ${expandedName === s.supplierName
+                              ? 'bg-blue-50'
+                              : ''
+                              }`}
                           >
                             <td className="py-2 px-3">
                               {s.supplierName}
@@ -565,7 +550,7 @@ export default function Suppliers() {
                               {(() => {
                                 const netBalance = roundMoney(
                                   (s.totalBalanceDue || 0) -
-                                    (s.creditBalance || 0)
+                                  (s.creditBalance || 0)
                                 );
 
                                 if (netBalance > 0) {
@@ -648,7 +633,11 @@ export default function Suppliers() {
                                         <th className="p-1 text-left border">
                                           Purchase ID
                                         </th>
+                                       
 
+                                        <th className="p-1 text-left border">
+                                          Bill ID
+                                        </th>
                                         <th className="p-1 text-left border">
                                           Date
                                         </th>
@@ -669,9 +658,7 @@ export default function Suppliers() {
                                           Status
                                         </th>
 
-                                        <th className="p-1 text-right border">
-                                          Credit Used
-                                        </th>
+                                       
                                       </tr>
                                     </thead>
 
@@ -688,6 +675,9 @@ export default function Suppliers() {
                                           <tr key={p.purchaseID}>
                                             <td className="p-1 border">
                                               {p.purchaseID}
+                                            </td>
+                                            <td className="p-1 border">
+                                              {p.billID || '—'}
                                             </td>
 
                                             <td className="p-1 border">
@@ -718,32 +708,24 @@ export default function Suppliers() {
                                             </td>
 
                                             <td
-                                              className={`p-1 border text-right ${
-                                                stillOwes
-                                                  ? 'text-red-700 font-semibold'
-                                                  : madeCredit
+                                              className={`p-1 border text-right ${stillOwes
+                                                ? 'text-red-700 font-semibold'
+                                                : madeCredit
                                                   ? 'text-green-700 font-semibold'
                                                   : 'text-gray-500'
-                                              }`}
+                                                }`}
                                             >
                                               {stillOwes
                                                 ? `Due ${formatMoney(
-                                                    p.balanceDue
-                                                  )}`
+                                                  p.balanceDue
+                                                )}`
                                                 : madeCredit
-                                                ? `Credit +${formatMoney(
+                                                  ? `Credit +${formatMoney(
                                                     p.creditGenerated
                                                   )}`
-                                                : 'Settled'}
+                                                  : 'Settled'}
                                             </td>
 
-                                            <td className="p-1 border text-right text-gray-600">
-                                              {p.creditApplied > 0
-                                                ? formatMoney(
-                                                    p.creditApplied
-                                                  )
-                                                : '—'}
-                                            </td>
                                           </tr>
                                         );
                                       })}
@@ -789,11 +771,10 @@ export default function Suppliers() {
                         })
                       }
                       placeholder="Supplier name"
-                      className={`border rounded px-3 py-2 w-full ${
-                        editingSupplierName
-                          ? 'bg-gray-100 cursor-not-allowed'
-                          : ''
-                      }`}
+                      className={`border rounded px-3 py-2 w-full ${editingSupplierName
+                        ? 'bg-gray-100 cursor-not-allowed'
+                        : ''
+                        }`}
                       readOnly={Boolean(editingSupplierName)}
                     />
 
@@ -913,7 +894,7 @@ export default function Suppliers() {
 
             <form
               onSubmit={handleRecordPurchase}
-              className="grid grid-cols-1 md:grid-cols-6 gap-3 text-sm items-end"
+              className="grid grid-cols-1 md:grid-cols-7 gap-3 text-sm items-end"
             >
               <div>
                 <label className="block mb-1 font-medium">
@@ -942,7 +923,24 @@ export default function Suppliers() {
                   ))}
                 </select>
               </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">
+                  Bill ID / Bill No. <span className="text-gray-500">(Optional)</span>
+                </label>
 
+                <input
+                  type="text"
+                  value={purchaseForm.billID}
+                  onChange={(e) =>
+                    setPurchaseForm((prev) => ({
+                      ...prev,
+                      billID: e.target.value,
+                    }))
+                  }
+                  placeholder="Enter supplier bill / receipt number"
+                  className="w-full rounded-md border px-3 py-2"
+                />
+              </div>
               <div>
                 <label className="block mb-1 font-medium">
                   Product
@@ -1021,14 +1019,16 @@ export default function Suppliers() {
 
               <div>
                 <label className="block mb-1 font-medium">
-                  Selling Price (optional)
+                  Retail (optional)
                 </label>
 
                 {isAdmin && purchaseForm.productId && (
                   <p className="text-xs text-gray-500 mb-1">
-                    Previous selling price:{' '}
+                    Previous retail:{' '}
                     <span className="font-medium text-gray-700">
-                      {formatMoney(previousSellingPrice ?? 0)}
+                      {previousSellingPrice == null
+                        ? 'Not set'
+                        : formatMoney(previousSellingPrice)}
                     </span>
                   </p>
                 )}
@@ -1068,18 +1068,19 @@ export default function Suppliers() {
                   step="0.01"
                   min="0"
                   value={purchaseForm.amountPaid}
-                  onChange={(e) =>
-                    setPurchaseForm({
-                      ...purchaseForm,
+                  onChange={(e) => {
+                    amountPaidManualRef.current = true;
+                    setPurchaseForm((prev) => ({
+                      ...prev,
                       amountPaid: e.target.value,
-                    })
-                  }
+                    }));
+                  }}
                   placeholder="0 = nothing paid yet"
                   className="border rounded px-3 py-2 w-full"
                 />
               </div>
 
-              <div className="md:col-span-6">
+              <div className="md:col-span-7">
                 <button
                   type="submit"
                   className="px-4 py-2 bg-brand-green text-white rounded hover:bg-green-700"
@@ -1088,12 +1089,7 @@ export default function Suppliers() {
                 </button>
 
                 <p className="text-xs text-gray-500 mt-1">
-                  Increases the product's stock immediately and logs
-                  what we still owe the supplier if not paid in full.
-                  Paying more than owed is recorded as supplier credit
-                  and applied automatically to their next purchase.
-                  Selling price is optional — leave it blank to keep
-                  the product's current customer-facing price.
+                  Optional
                 </p>
               </div>
             </form>

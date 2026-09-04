@@ -9,7 +9,7 @@ const pendingBillSchema = new Schema({
   cashier: { type: String, required: true, unique: true, trim: true, lowercase: true },
   // Only set once the cashier reaches Preview (that's when an order ID is
   // reserved) — null before that.
-  billID: { type: String, match: /^#\d{4}$/, default: null },
+  billID: { type: String, match: /^(?:INV-\d{4,}|#\d{4})$/, default: null },
   customerName: { type: String, default: '' },
   // What the cashier has typed into the "Paid" field so far — carried in
   // the draft (not a separate request param) for the same reason

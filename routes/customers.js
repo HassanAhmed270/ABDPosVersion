@@ -1,5 +1,6 @@
 const express = require('express');
 const Customer = require('../models/Customers');
+const PaymentInvoice = require('../models/PaymentInvoice');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const { asyncHandler } = require('../middleware/errorHandler');
 const { escapeRegex, parsePagination, sortAndPaginate } = require('../lib/query');
@@ -7,6 +8,7 @@ const { roundMoney } = require('../lib/money');
 const { logAudit } = require('../lib/auditLog');
 const { isValidEmail, isValidPhone } = require('../lib/validators');
 const { generateCustomerID } = require('../lib/customerID');
+const { nextPaymentInvoiceId } = require('../lib/orderId');
 
 const router = express.Router();
 
@@ -319,6 +321,23 @@ router.post('/customer/updateCustomer', requireAuth, asyncHandler(async (req, re
     after: updatedCustomer.toObject(),
   });
 
+  // A real payment was applied (not just an info edit) — create the
+  // permanent, printable PINV-#### record behind it. currentBalance/
+  // newBalance were already computed above from the same values this
+  // update just wrote, so this reflects exactly what happened here.
+  let paymentInvoice = null;
+
+  if (amount > 0) {
+    paymentInvoice = await PaymentInvoice.create({
+      invoiceNumber: await nextPaymentInvoiceId(),
+      customerName,
+      oldBalance: currentBalance,
+      paidAmount: amount,
+      newBalance,
+      cashier: req.user.username,
+    });
+  }
+
   console.log('[9] Sending response:', {
     accountBalance: updatedCustomer.accountBalance,
   });
@@ -329,6 +348,7 @@ router.post('/customer/updateCustomer', requireAuth, asyncHandler(async (req, re
     success: true,
     message: 'Customer updated successfully',
     customer: updatedCustomer,
+    paymentInvoice,
   });
 }));
 
@@ -443,6 +463,30 @@ router.post('/customer/undoCustomer', requireAuth, asyncHandler(async (req, res)
     message: 'Customer restored successfully',
     customer: newCustomer,
   });
+}));
+
+// The printable payment-invoice history behind a customer's balance
+// payments (see POST /customer/updateCustomer, above) — what "record
+// of that... visited somewhere from the customer section" (Billing
+// project notes) resolves to. Read-only, so a cashier/manager can
+// browse and reprint past PINV-#### receipts for a customer.
+router.get('/customer/paymentInvoices', requireAuth, asyncHandler(async (req, res) => {
+  const { customerName } = req.query;
+
+  if (!customerName || customerName.trim() === '') {
+    return res.status(400).json({
+      success: false,
+      message: 'customerName is required',
+    });
+  }
+
+  const invoices = await PaymentInvoice.find({
+    customerName: customerName.trim(),
+  })
+    .sort({ createdAt: -1 })
+    .lean();
+
+  res.status(200).json({ success: true, invoices });
 }));
 
 module.exports = router;

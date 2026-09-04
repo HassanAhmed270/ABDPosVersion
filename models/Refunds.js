@@ -6,7 +6,7 @@ const { Schema } = mongoose;
 // this order, as opposed to a correction to what's owed. One document per
 // refund action (which may cover several line items at once).
 const refundSchema = new Schema({
-  orderID: { type: String, required: true, match: /^#\d{4}$/ },
+  orderID: { type: String, required: true, match: /^(?:INV-\d{4,}|#\d{4})$/ },
   customerName: { type: String, required: true },
   refundAmount: { type: Number, required: true, min: 0 },
   refundedItems: [

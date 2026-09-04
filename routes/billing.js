@@ -13,6 +13,7 @@ const { getLatestSellingPrice } = require('../lib/pricing');
 const { consumeFIFO, deriveCostSource, disableIfDepleted } = require('../lib/costing');
 const { logAudit } = require('../lib/auditLog');
 const { applyCustomerAccountDelta } = require('../lib/customerAccount');
+const { nextInvoiceId } = require('../lib/orderId');
 const { isValidProductId, isValidOrderId, isValidEmail, isValidPhone } = require('../lib/validators');
 const logger = require('../lib/logger');
 
@@ -256,14 +257,17 @@ router.post('/billing/orderDetails', requireAuth, asyncHandler(async (req, res) 
           throw new AppError(400, `Product ${item.productID} no longer exists.`);
         }
 
-      const currentRetailPrice = roundMoney(getLatestSellingPrice(product));
+      // null means the product has no catalog selling price set at all —
+      // there's nothing to have "changed since you added it", so the
+      // staleness check only applies once a real reference price exists.
+      const currentRetailPrice = getLatestSellingPrice(product);
 const capturedRetailPrice = roundMoney(item.retailPrice);
 const sellingRate = roundMoney(item.unitPrice);
 
 // Retail price is the database/reference price.
 // The cashier's selling rate may intentionally be lower or otherwise
 // different from the retail price.
-if (Math.abs(currentRetailPrice - capturedRetailPrice) > 0.01) {
+if (currentRetailPrice !== null && Math.abs(currentRetailPrice - capturedRetailPrice) > 0.01) {
   logger.warn(
     {
       productID: item.productID,
@@ -286,7 +290,12 @@ const amount = roundMoney(sellingRate * item.quantity);
 verifiedProducts.push({
   productID: item.productID,
   quantity: item.quantity,
-  retailPrice: currentRetailPrice,
+  // Order.retailPrice is a required field (it's the receipt's "Retail"
+  // column) — when the product has no catalog price at all, fall back
+  // to whatever the cashier captured/charged so the order still saves
+  // and the receipt shows a real number instead of failing to record
+  // a reference price that was never set.
+  retailPrice: currentRetailPrice !== null ? currentRetailPrice : capturedRetailPrice,
   unitPrice: sellingRate,
   amount,
 });
@@ -474,6 +483,17 @@ verifiedProducts.push({
     order,
     customer,
   });
+}));
+
+// Allocates the next sequential invoice number ("INV-0001", "INV-0002",
+// ...) via the atomic Counter-backed generator (lib/orderId.js) and
+// hands it straight back — replaces the old client-side random-guess-
+// and-check loop that used to hit POST /billing/orderid in a retry
+// loop. Called once, from Billing.jsx's handlePreview, the moment a
+// cashier reaches Preview.
+router.post('/billing/nextInvoiceId', requireAuth, asyncHandler(async (req, res) => {
+  const invoiceId = await nextInvoiceId();
+  res.status(200).json({ success: true, invoiceId });
 }));
 
 // Read-only lookup, not a mutation — stays public like the other GET/list endpoints.
