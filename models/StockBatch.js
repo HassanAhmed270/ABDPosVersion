@@ -37,7 +37,7 @@ const stockBatchSchema = new Schema({
   // changes (Stage 22 exit criteria #6).
   unitCost: { type: Number, required: true, min: 0 },
   purchaseDate: { type: Date, default: Date.now }
-});
+}, { timestamps: true });
 
 // FIFO consumption order — oldest batch for a product first.
 stockBatchSchema.index({ productID: 1, purchaseDate: 1 });

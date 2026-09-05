@@ -23,6 +23,6 @@ const refundSchema = new Schema({
   // when this refund didn't free up any overpayment to begin with.
   settlement: { type: String, enum: ['none', 'cash', 'credit'], default: 'none' },
   creditGenerated: { type: Number, min: 0, default: 0 }
-});
+}, { timestamps: true });
 
 module.exports = mongoose.model('Refund', refundSchema);

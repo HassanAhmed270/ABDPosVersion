@@ -16,7 +16,7 @@ const auditLogSchema = new Schema({
   before: { type: Schema.Types.Mixed, default: null },
   after: { type: Schema.Types.Mixed, default: null },
   date: { type: Date, default: Date.now },
-});
+}, { timestamps: true });
 
 auditLogSchema.index({ date: -1 });
 

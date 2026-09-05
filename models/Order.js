@@ -93,7 +93,7 @@ const orderSchema = new Schema({
       creditAmount: { type: Number, min: 0, default: 0 }
     }
   ]
-});
+}, { timestamps: true });
 
 // Stage 3: orderDate is range-queried by every dashboard/report window
 // (lib/reports.js) and is the default sort for /api/orders; customerName

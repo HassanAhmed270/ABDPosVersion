@@ -23,7 +23,7 @@ const lossSchema = new Schema({
     role: { type: String, required: true }
   },
   date: { type: Date, default: Date.now }
-});
+}, { timestamps: true });
 
 lossSchema.index({ date: -1 });
 

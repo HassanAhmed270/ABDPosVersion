@@ -1,17 +1,19 @@
-const { app, BrowserWindow, screen } = require('electron');
+const { app, BrowserWindow, screen, dialog } = require('electron');
 const path = require('path');
+const mongod = require('./lib/mongod');
+const backend = require('./lib/backend');
+const syncJob = require('./lib/syncJob');
 
-// The React app's own layout is a fixed 1536x898 design canvas (see
-// frontend/src/components/AppCanvas.jsx + index.css) that scales itself
-// down proportionally via CSS when it has less room than this. Electron
-// just needs to give that canvas as close to its native 1536x898 as the
-// display allows — never force a window bigger than the screen's usable
-// area, and never stop the user from resizing smaller, since the app's
-// own CSS scaling (not a separate Electron-only layout) handles that.
+require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
+
+app.setName('BPIOLS');
+
 const DESIGN_WIDTH = 1536;
 const DESIGN_HEIGHT = 898;
 const MIN_WIDTH = 480;
 const MIN_HEIGHT = 320;
+
+let started = false;
 
 function createWindow() {
   const { width: workAreaWidth, height: workAreaHeight } =
@@ -33,14 +35,45 @@ function createWindow() {
   win.loadFile(path.join(__dirname, '..', 'frontend', 'dist-electron', 'index.html'));
 }
 
-app.whenReady().then(() => {
-  createWindow();
+async function startLocalStack() {
+  const { port: mongoPort } = await mongod.start();
+  await backend.start({ mongoPort });
+  syncJob.start({ mongoPort });
+}
+
+app.whenReady().then(async () => {
+  try {
+    await startLocalStack();
+    started = true;
+    createWindow();
+  } catch (err) {
+    console.error('Local stack failed to start:', err);
+    dialog.showErrorBox(
+      'BPIOLS failed to start',
+      `The local database or backend service did not start correctly.\n\n${err.message}\n\n` +
+        `The app will now close. If this keeps happening, check the logs in the app data folder.`
+    );
+    app.quit();
+  }
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (started && BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
+});
+
+let shuttingDown = false;
+app.on('before-quit', async (event) => {
+  if (shuttingDown || !started) return;
+  shuttingDown = true;
+  event.preventDefault();
+
+  await syncJob.stop();
+  await backend.stop();
+  await mongod.stop();
+
+  app.quit();
 });

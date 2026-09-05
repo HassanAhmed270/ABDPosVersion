@@ -105,7 +105,7 @@ const customerSchema = new mongoose.Schema({
     type: Number,
     default: 0,
   },
-});
+}, { timestamps: true });
 
 // Optional: virtual to get orders sorted by date descending.
 customerSchema.virtual('sortedOrders').get(function () {

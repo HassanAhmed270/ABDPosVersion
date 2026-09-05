@@ -39,7 +39,7 @@ const supplierSchema = new Schema({
   purchases: [purchaseSchema],
   billID: { type: String, default: '' },
   creditBalance: { type: Number, min: 0, default: 0 }
-});
+}, { timestamps: true });
 
 
 supplierSchema.virtual('totalBalanceDue').get(function () {

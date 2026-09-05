@@ -63,7 +63,7 @@ const productSchema = new Schema({
   // no longer be selected for a new bill — see routes/billing.js's
   // /billing/reserve guard and lib/costing.js's disableIfDepleted().
   disabled: { type: Boolean, default: false }
-});
+}, { timestamps: true });
 
 // Stage 3: category is searched via regex in /api/products' $or filter
 // and had no index before this stage.
