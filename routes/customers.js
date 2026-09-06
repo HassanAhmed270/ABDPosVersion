@@ -5,7 +5,10 @@ const { requireAuth, requireAdmin } = require('../middleware/auth');
 const { asyncHandler } = require('../middleware/errorHandler');
 const { escapeRegex, parsePagination, sortAndPaginate } = require('../lib/query');
 const { roundMoney } = require('../lib/money');
-const { logAudit } = require('../lib/auditLog');
+const {
+  logAudit,
+  customerFinancialSnapshot,
+} = require('../lib/auditLog');
 const { isValidEmail, isValidPhone } = require('../lib/validators');
 const { generateCustomerID } = require('../lib/customerID');
 const { nextPaymentInvoiceId } = require('../lib/orderId');
@@ -309,17 +312,49 @@ router.post('/customer/updateCustomer', requireAuth, asyncHandler(async (req, re
 
   console.log('========== BALANCE DEBUG END ==========\n');
 
-  await logAudit({
-    action: 'customer.updated',
-    actor: {
-      username: req.user.username,
-      role: req.user.role,
-    },
-    targetType: 'customer',
-    targetId: beforeCustomer.customerName,
-    before: beforeCustomer.toObject(),
-    after: updatedCustomer.toObject(),
-  });
+ await logAudit({
+  action: amount > 0
+    ? 'customer.payment'
+    : 'customer.updated',
+
+  actor: {
+    username: req.user.username,
+    role: req.user.role,
+  },
+
+  targetType: 'customer',
+  targetId: beforeCustomer.customerID,
+
+  before: {
+    customerID: beforeCustomer.customerID,
+    customerName: beforeCustomer.customerName,
+
+    financial: customerFinancialSnapshot(beforeCustomer),
+
+    ...(amount > 0
+      ? {
+          payment: {
+            amount: roundMoney(amount),
+          },
+        }
+      : {}),
+  },
+
+  after: {
+    customerID: updatedCustomer.customerID,
+    customerName: updatedCustomer.customerName,
+
+    financial: customerFinancialSnapshot(updatedCustomer),
+
+    ...(amount > 0
+      ? {
+          payment: {
+            amount: roundMoney(amount),
+          },
+        }
+      : {}),
+  },
+});
 
   // A real payment was applied (not just an info edit) — create the
   // permanent, printable PINV-#### record behind it. currentBalance/
@@ -401,7 +436,11 @@ router.post('/customer/deleteCustomer', requireAuth, requireAdmin, asyncHandler(
     },
     targetType: 'customer',
     targetId: deletedCustomer.customerName,
-    before: deletedCustomer.toObject(),
+    before: {
+  customerID: deletedCustomer.customerID,
+  customerName: deletedCustomer.customerName,
+  financial: customerFinancialSnapshot(deletedCustomer),
+},
     after: null,
   });
 
@@ -455,7 +494,11 @@ router.post('/customer/undoCustomer', requireAuth, asyncHandler(async (req, res)
     targetType: 'customer',
     targetId: customerID,
     before: null,
-    after: newCustomer.toObject(),
+    after: {
+  customerID: newCustomer.customerID,
+  customerName: newCustomer.customerName,
+  financial: customerFinancialSnapshot(newCustomer),
+},
   });
 
   res.status(200).json({

@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>BPIOLS — First-time setup</title>
+  <style>
+    body {
+      font-family: -apple-system, Segoe UI, Arial, sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      margin: 0;
+      padding: 40px;
+    }
+    .card {
+      max-width: 480px;
+      margin: 0 auto;
+      background: #1e293b;
+      border-radius: 12px;
+      padding: 28px;
+    }
+    h1 { font-size: 18px; margin: 0 0 4px; }
+    p.sub { color: #94a3b8; font-size: 13px; margin: 0 0 24px; }
+    label { display: block; font-size: 13px; margin: 16px 0 6px; color: #cbd5e1; }
+    input {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 10px 12px;
+      border-radius: 6px;
+      border: 1px solid #334155;
+      background: #0f172a;
+      color: #e2e8f0;
+      font-size: 14px;
+    }
+    input:focus { outline: 2px solid #3b82f6; border-color: transparent; }
+    button {
+      width: 100%;
+      margin-top: 24px;
+      padding: 12px;
+      border-radius: 6px;
+      border: none;
+      background: #3b82f6;
+      color: white;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:disabled { background: #475569; cursor: not-allowed; }
+    .error {
+      color: #f87171;
+      font-size: 13px;
+      margin-top: 12px;
+      min-height: 16px;
+    }
+    .hint { color: #64748b; font-size: 12px; margin-top: 4px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Welcome to BPIOLS</h1>
+    <p class="sub">One-time setup — this only runs once, on this machine.</p>
+
+    <label for="atlasUri">Cloud database connection string</label>
+    <input id="atlasUri" type="text" placeholder="mongodb://..." autocomplete="off" />
+    <div class="hint">Provided by your BPIOLS administrator.</div>
+
+    <label for="username">Admin username</label>
+    <input id="username" type="text" autocomplete="off" />
+
+    <label for="password">Admin password</label>
+    <input id="password" type="password" autocomplete="new-password" />
+
+    <label for="confirmPassword">Confirm password</label>
+    <input id="confirmPassword" type="password" autocomplete="new-password" />
+
+    <button id="submitBtn">Complete setup</button>
+    <div class="error" id="errorMsg"></div>
+  </div>
+
+  <script>
+    const submitBtn = document.getElementById('submitBtn');
+    const errorMsg = document.getElementById('errorMsg');
+
+    submitBtn.addEventListener('click', async () => {
+      const atlasUri = document.getElementById('atlasUri').value.trim();
+      const username = document.getElementById('username').value.trim();
+      const password = document.getElementById('password').value;
+      const confirmPassword = document.getElementById('confirmPassword').value;
+
+      errorMsg.textContent = '';
+
+      if (!atlasUri || !username || !password) {
+        errorMsg.textContent = 'All fields are required.';
+        return;
+      }
+      if (password !== confirmPassword) {
+        errorMsg.textContent = 'Passwords do not match.';
+        return;
+      }
+      if (password.length < 8) {
+        errorMsg.textContent = 'Password must be at least 8 characters.';
+        return;
+      }
+
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Setting up...';
+
+      const result = await window.setupAPI.submit({ atlasUri, username, password });
+
+      if (!result.success) {
+        errorMsg.textContent = result.message || 'Setup failed. Please try again.';
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Complete setup';
+      }
+      // On success, the main process closes this window itself.
+    });
+  </script>
+</body>
+</html>

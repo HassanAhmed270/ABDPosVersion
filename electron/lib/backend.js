@@ -87,11 +87,19 @@ function waitForHealth(port, timeoutMs) {
   });
 }
 
+function getLogPath() {
+  const dir = path.join(app.getPath('userData'), 'backend-logs');
+  fs.mkdirSync(dir, { recursive: true });
+  return path.join(dir, 'backend.log');
+}
+
 async function start({ mongoPort }) {
   if (backendProcess) return { port: BACKEND_PORT };
 
   const entry = resolveBackendEntry();
   const jwtSecret = getOrCreateJwtSecret();
+  const logPath = getLogPath();
+  const logStream = fs.createWriteStream(logPath, { flags: 'a' });
 
   backendProcess = spawn(
     process.execPath, // reuse Electron's own bundled Node, no separate
@@ -111,10 +119,18 @@ async function start({ mongoPort }) {
         ELECTRON_RUN_AS_NODE: '1', // run process.execPath as plain Node,
                                     // not as another Electron instance
       },
-      stdio: 'inherit',
+      // Writing directly to a logfile via a Node stream — 'inherit' /
+      // shell redirection proved unreliable for this grandchild process
+      // through Electron's own console handling on Windows during Phase
+      // 1 debugging. 'pipe' lets us forward the child's stdout/stderr
+      // into our own writable stream explicitly.
+      stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     }
   );
+
+  backendProcess.stdout.pipe(logStream);
+  backendProcess.stderr.pipe(logStream);
 
   let exitedEarly = false;
   const earlyExitHandler = (code) => {

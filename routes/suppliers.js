@@ -11,7 +11,10 @@ const { roundMoney } = require('../lib/money');
 const { getLatestSellingPrice } = require('../lib/pricing');
 const { createBatch, generateUniquePurchaseId } = require('../lib/costing');
 const { escapeRegex, parsePagination, sortAndPaginate } = require('../lib/query');
-const { logAudit } = require('../lib/auditLog');
+const {
+  logAudit,
+  supplierFinancialSnapshot,
+} = require('../lib/auditLog');
 const { isValidProductId, isValidEmail, isValidPhone } = require('../lib/validators');
 
 const router = express.Router();
@@ -261,55 +264,69 @@ router.post('/api/supplier', requireAuth, requireAdmin, asyncHandler(async (req,
             targetId: supplier.supplierName,
 
             before: {
-              supplierName: beforeSupplier.supplierName,
-              contactPerson: beforeSupplier.contactPerson,
-              phone: beforeSupplier.phone,
-              email: beforeSupplier.email,
-              address: beforeSupplier.address,
-              totalBalanceDue: roundMoney(
-                beforeSupplier.purchases.reduce(
-                  (sum, purchase) => sum + (purchase.balanceDue || 0),
-                  0
-                )
-              ),
-              creditBalance: roundMoney(beforeSupplier.creditBalance || 0),
-            },
+  supplierName: beforeSupplier.supplierName,
 
-            after: {
-              supplierName: supplier.supplierName,
-              contactPerson: supplier.contactPerson,
-              phone: supplier.phone,
-              email: supplier.email,
-              address: supplier.address,
+  financial: supplierFinancialSnapshot(beforeSupplier),
+},
 
-              adjustmentAmount,
-              totalBalanceDue: roundMoney(
-                supplier.purchases.reduce(
-                  (sum, purchase) => sum + (purchase.balanceDue || 0),
-                  0
-                )
-              ),
-              creditBalance: roundMoney(supplier.creditBalance || 0),
-              unappliedAmount: remainingAdjustment,
-            },
+after: {
+  supplierName: supplier.supplierName,
+
+  financial: supplierFinancialSnapshot(supplier),
+
+  payment: {
+    amount: roundMoney(adjustmentAmount),
+    unappliedAmount: roundMoney(remainingAdjustment),
+  },
+},
+
+            
           },
           session
         );
       } else {
         await logAudit(
-          {
-            action: 'supplier.updated',
-            actor: {
-              username: req.user.username,
-              role: req.user.role,
-            },
-            targetType: 'supplier',
-            targetId: supplier.supplierName,
-            before: beforeSnapshot,
-            after: supplier.toObject(),
-          },
-          session
-        );
+  {
+    action: 'supplier.purchase',
+
+    actor: {
+      username: req.user.username,
+      role: req.user.role,
+    },
+
+    targetType: 'supplier',
+    targetId: supplier.supplierName,
+
+    before: {
+      financial: supplierFinancialSnapshot(supplier),
+    },
+
+    after: {
+      purchase: {
+        purchaseID,
+        billID: cleanBillID,
+        totalAmount: roundMoney(totalAmount),
+        amountPaid: roundMoney(paid),
+        balanceDue: roundMoney(balanceDue),
+        creditApplied: roundMoney(creditApplied),
+        creditGenerated: roundMoney(creditGenerated),
+      },
+
+      financial: {
+        totalBalanceDue: roundMoney(
+          supplierDoc.purchases.reduce(
+            (sum, purchase) =>
+              sum + (Number(purchase.balanceDue) || 0),
+            0
+          ) + balanceDue
+        ),
+
+        creditBalance: roundMoney(newCreditBalance),
+      },
+    },
+  },
+  session
+);
       }
     });
   } finally {
@@ -341,7 +358,10 @@ router.delete('/supplier/:supplierName', requireAuth, requireAdmin, asyncHandler
     actor: { username: req.user.username, role: req.user.role },
     targetType: 'supplier',
     targetId: deleted.supplierName,
-    before: deleted.toObject(),
+    before: {
+      supplierName: deleted.supplierName,
+      financial: supplierFinancialSnapshot(deleted),
+    },
     after: null,
   });
   res.status(200).json({ success: true, message: 'Supplier deleted successfully' });
@@ -526,25 +546,34 @@ router.post('/supplier/purchase', requireAuth, asyncHandler(async (req, res) => 
         },
         { session }
       );
+      const afterSupplier = await Supplier
+        .findOne({ _id: supplier._id })
+        .session(session);
 
       await logAudit(
         {
           action: 'supplier.purchase',
-          actor: { username: req.user.username, role: req.user.role },
+          actor: {
+            username: req.user.username,
+            role: req.user.role,
+          },
           targetType: 'supplier',
           targetId: supplier.supplierName,
-          before: null,
+          before: {
+            financial: supplierFinancialSnapshot(supplier),
+          },
           after: {
-            purchaseID,
-            billID: cleanBillID,
-            supplierName: supplier.supplierName,
-            items: cleanItems,
-            totalAmount,
-            amountPaid: paid,
-            balanceDue,
-            creditApplied,
-            creditGenerated,
-            newCreditBalance,
+            purchase: {
+              purchaseID,
+              billID: cleanBillID,
+              items: cleanItems,
+              totalAmount: roundMoney(totalAmount),
+              amountPaid: roundMoney(paid),
+              balanceDue: roundMoney(balanceDue),
+              creditApplied: roundMoney(creditApplied),
+              creditGenerated: roundMoney(creditGenerated),
+            },
+            financial: supplierFinancialSnapshot(afterSupplier),
           },
         },
         session

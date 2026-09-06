@@ -9,34 +9,77 @@ const router = express.Router();
 
 // ── Audit Log (Stage 14) — admin-only, read-only. See lib/auditLog.js
 // for how entries get written and how the collection stays bounded.
-router.get('/api/audit-log', requireAuth, requireAdmin, asyncHandler(async (req, res) => {
-  const { search = '', sortBy = 'date', sortDir = 'desc', action = '' } = req.query;
-  const { page, limit } = parsePagination(req.query);
+router.get(
+  '/api/audit-log',
+  requireAuth,
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    const {
+      search = '',
+      sortBy = 'date',
+      sortDir = 'desc',
+      action = '',
+    } = req.query;
 
-  const filter = {};
-  if (action) filter.action = action;
-  if (search) {
-    filter.$or = [
-      { 'actor.username': { $regex: escapeRegex(search), $options: 'i' } },
-      { targetId: { $regex: escapeRegex(search), $options: 'i' } },
-      { action: { $regex: escapeRegex(search), $options: 'i' } },
-    ];
-  }
+    const { page, limit } = parsePagination(req.query);
 
-  const data = await AuditLog.find(filter);
-  const mapped = data.map((a) => ({
-    _id: a._id,
-    action: a.action,
-    actor: a.actor,
-    targetType: a.targetType,
-    targetId: a.targetId,
-    before: a.before,
-    after: a.after,
-    date: a.date,
-  }));
+    const filter = {};
 
-  const { data: entries, total } = sortAndPaginate(mapped, { sortBy, sortDir, page, limit });
-  res.json({ success: true, entries, total, page, limit });
-}));
+    if (action) {
+      filter.action = action;
+    }
+
+    if (search) {
+      filter.$or = [
+        {
+          'actor.username': {
+            $regex: escapeRegex(search),
+            $options: 'i',
+          },
+        },
+        {
+          targetId: {
+            $regex: escapeRegex(search),
+            $options: 'i',
+          },
+        },
+        {
+          action: {
+            $regex: escapeRegex(search),
+            $options: 'i',
+          },
+        },
+        {
+          targetType: {
+            $regex: escapeRegex(search),
+            $options: 'i',
+          },
+        },
+      ];
+    }
+
+    const sort = {
+      [sortBy]: sortDir === 'asc' ? 1 : -1,
+    };
+
+    const [entries, total] = await Promise.all([
+      AuditLog.find(filter)
+        .sort(sort)
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+
+      AuditLog.countDocuments(filter),
+    ]);
+
+    res.json({
+      success: true,
+      entries,
+      total,
+      page,
+      limit,
+    });
+  })
+);
 
 module.exports = router;

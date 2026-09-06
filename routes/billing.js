@@ -11,7 +11,11 @@ const { AppError } = require('../lib/errors');
 const { roundMoney } = require('../lib/money');
 const { getLatestSellingPrice } = require('../lib/pricing');
 const { consumeFIFO, deriveCostSource, disableIfDepleted } = require('../lib/costing');
-const { logAudit } = require('../lib/auditLog');
+const {
+  logAudit,
+  orderFinancialSnapshot,
+  customerFinancialSnapshot,
+} = require('../lib/auditLog');
 const { applyCustomerAccountDelta } = require('../lib/customerAccount');
 const { nextInvoiceId } = require('../lib/orderId');
 const { isValidProductId, isValidOrderId, isValidEmail, isValidPhone } = require('../lib/validators');
@@ -461,14 +465,30 @@ verifiedProducts.push({
         { session }
       );
 
+      const createdCustomer =
+        order.customerName !== WALKIN_CUSTOMER
+          ? await Customer.findOne({
+              customerName: order.customerName,
+            }).session(session)
+          : null;
+
       await logAudit(
         {
           action: 'order.created',
-          actor: { username: req.user.username, role: req.user.role },
+          actor: {
+            username: req.user.username,
+            role: req.user.role,
+          },
           targetType: 'order',
           targetId: order.orderID,
-          before: null,
-          after: order.toObject(),
+          before: {
+            order: null,
+            customer: null,
+          },
+          after: {
+            order: orderFinancialSnapshot(order),
+            customer: customerFinancialSnapshot(createdCustomer),
+          },
         },
         session
       );

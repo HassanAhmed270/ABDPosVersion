@@ -13,7 +13,11 @@ const { deriveCostSource, restoreConsumption, consumeFIFO, disableIfDepleted } =
 const { getLatestSellingPrice } = require('../lib/pricing');
 const { escapeRegex, parsePagination, sortAndPaginate } = require('../lib/query');
 const { getDashboardSummary } = require('../lib/reports');
-const { logAudit } = require('../lib/auditLog');
+const {
+  logAudit,
+  customerFinancialSnapshot,
+  orderFinancialSnapshot,
+} = require('../lib/auditLog');
 const { applyCustomerAccountDelta } = require('../lib/customerAccount');
 const { isValidOrderId, isValidProductId } = require('../lib/validators');
 
@@ -279,6 +283,20 @@ router.post('/api/order/:orderID/edit', requireAuth, requireAdmin, asyncHandler(
 
       const beforeOrder = order.toObject();
       const beforeBalanceDue = order.balanceDue;
+      let beforeCustomer = null;
+
+if (order.customerName !== WALKIN_CUSTOMER) {
+  beforeCustomer = await Customer
+    .findOne({ customerName: order.customerName })
+    .session(session);
+
+  if (!beforeCustomer) {
+    throw new AppError(
+      400,
+      `Customer "${order.customerName}" no longer exists.`
+    );
+  }
+}
       const historyStartIdx = order.editHistory.length;
       if (isAdd) {
         await applyLineAddition(order, productID, qty, reason.trim(), req.user.username, session);
@@ -307,7 +325,13 @@ router.post('/api/order/:orderID/edit', requireAuth, requireAdmin, asyncHandler(
       // matching Customer document to update.
       const accountDelta = (order.balanceDue - beforeBalanceDue) - creditGenerated;
       await applyCustomerAccountDelta(Customer, order.customerName, accountDelta, session);
+      let afterCustomer = null;
 
+if (order.customerName !== WALKIN_CUSTOMER) {
+  afterCustomer = await Customer
+    .findOne({ customerName: order.customerName })
+    .session(session);
+}
       const customerUpdate = {
         $set: {
           'orders.$.totalAmount': order.totalAmount,
@@ -332,16 +356,42 @@ router.post('/api/order/:orderID/edit', requireAuth, requireAdmin, asyncHandler(
         }
       }
       await logAudit(
-        {
-          action: 'order.edited',
-          actor: { username: req.user.username, role: req.user.role },
-          targetType: 'order',
-          targetId: order.orderID,
-          before: beforeOrder,
-          after: order.toObject(),
-        },
-        session
-      );
+  {
+    action: 'order.edited',
+
+    actor: {
+      username: req.user.username,
+      role: req.user.role,
+    },
+
+    targetType: 'order',
+    targetId: order.orderID,
+
+    before: {
+      order: orderFinancialSnapshot(beforeOrder),
+
+      customer:
+        customerFinancialSnapshot(beforeCustomer),
+
+      changes: {
+        type: 'edit',
+      },
+    },
+
+    after: {
+      order: orderFinancialSnapshot(order),
+
+      customer:
+        customerFinancialSnapshot(afterCustomer),
+
+      changes: {
+        type: 'edit',
+        creditGenerated: roundMoney(creditGenerated),
+      },
+    },
+  },
+  session
+);
 
       updatedOrder = order;
     });
@@ -419,14 +469,27 @@ router.post('/api/order/:orderID/convert-customer', requireAuth, requireAdmin, a
         { session }
       );
 
+      const afterCustomer = await Customer.findOne({
+        customerName,
+      }).session(session);
+
       await logAudit(
         {
           action: 'order.customer_attached',
-          actor: { username: req.user.username, role: req.user.role },
+          actor: {
+            username: req.user.username,
+            role: req.user.role,
+          },
           targetType: 'order',
           targetId: order.orderID,
-          before: beforeOrder,
-          after: order.toObject(),
+          before: {
+            order: orderFinancialSnapshot(beforeOrder),
+            customer: null,
+          },
+          after: {
+            order: orderFinancialSnapshot(order),
+            customer: customerFinancialSnapshot(afterCustomer),
+          },
         },
         session
       );
@@ -474,9 +537,16 @@ router.post('/api/order/:orderID/refund', requireAuth, requireAdmin, asyncHandle
       if (order.status === 'refunded') {
         throw new AppError(400, 'This order has already been refunded.');
       }
+      let beforeCustomer = null;
 
+if (order.customerName !== WALKIN_CUSTOMER) {
+  beforeCustomer = await Customer
+    .findOne({ customerName: order.customerName })
+    .session(session);
+}
       const beforeOrder = order.toObject();
       const beforeBalanceDue = order.balanceDue;
+      
       const refundedItems = [];
       const historyStartIdx = order.editHistory.length;
       let refundAmount = 0;
@@ -542,7 +612,13 @@ router.post('/api/order/:orderID/refund', requireAuth, requireAdmin, asyncHandle
       // prior balanceDue this refund erased.
       const accountDelta = (order.balanceDue - beforeBalanceDue) - creditGenerated;
       await applyCustomerAccountDelta(Customer, order.customerName, accountDelta, session);
+      let afterCustomer = null;
 
+if (order.customerName !== WALKIN_CUSTOMER) {
+  afterCustomer = await Customer
+    .findOne({ customerName: order.customerName })
+    .session(session);
+}
       const customerUpdate = {
         $set: {
           'orders.$.totalAmount': order.totalAmount,
@@ -560,16 +636,43 @@ router.post('/api/order/:orderID/refund', requireAuth, requireAdmin, asyncHandle
       }
 
       await logAudit(
-        {
-          action: 'order.refunded',
-          actor: { username: req.user.username, role: req.user.role },
-          targetType: 'order',
-          targetId: order.orderID,
-          before: beforeOrder,
-          after: order.toObject(),
-        },
-        session
-      );
+  {
+    action: 'order.refunded',
+
+    actor: {
+      username: req.user.username,
+      role: req.user.role,
+    },
+
+    targetType: 'order',
+    targetId: order.orderID,
+
+    before: {
+      order: orderFinancialSnapshot(beforeOrder),
+
+      customer:
+        customerFinancialSnapshot(beforeCustomer),
+
+      refund: null,
+    },
+
+    after: {
+      order: orderFinancialSnapshot(order),
+
+      customer:
+        customerFinancialSnapshot(afterCustomer),
+
+      refund: {
+        refundAmount: roundMoney(refundAmount),
+        settlement: disposition,
+        creditGenerated: roundMoney(creditGenerated),
+        reason: reason.trim(),
+        items: refundedItems,
+      },
+    },
+  },
+  session
+);
 
       updatedOrder = order;
     });
