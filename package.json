@@ -41,7 +41,6 @@
       { "from": "middleware", "to": "backend/middleware" },
       { "from": "models", "to": "backend/models" },
       { "from": "routes", "to": "backend/routes" },
-      { "from": "scripts/createUser.js", "to": "backend/scripts/createUser.js" },
       { "from": "package.json", "to": "backend/package.json" },
       { "from": "node_modules", "to": "backend/node_modules" }
     ],

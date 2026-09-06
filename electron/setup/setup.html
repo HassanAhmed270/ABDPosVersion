@@ -59,9 +59,17 @@
     <h1>Welcome to BPIOLS</h1>
     <p class="sub">One-time setup — this only runs once, on this machine.</p>
 
+    <label for="businessName">Your business name</label>
+    <input id="businessName" type="text" autocomplete="off" />
+    <div class="hint">Must match exactly what you gave your BPIOLS administrator when requesting your license key.</div>
+
+    <label for="licenseKey">License key</label>
+    <input id="licenseKey" type="text" autocomplete="off" />
+    <div class="hint">Provided by your BPIOLS administrator.</div>
+
     <label for="atlasUri">Cloud database connection string</label>
     <input id="atlasUri" type="text" placeholder="mongodb://..." autocomplete="off" />
-    <div class="hint">Provided by your BPIOLS administrator.</div>
+    <div class="hint">Provided by your BPIOLS administrator. Paste only the connection string itself, nothing else.</div>
 
     <label for="username">Admin username</label>
     <input id="username" type="text" autocomplete="off" />
@@ -81,6 +89,8 @@
     const errorMsg = document.getElementById('errorMsg');
 
     submitBtn.addEventListener('click', async () => {
+      const businessName = document.getElementById('businessName').value.trim();
+      const licenseKey = document.getElementById('licenseKey').value.trim();
       const atlasUri = document.getElementById('atlasUri').value.trim();
       const username = document.getElementById('username').value.trim();
       const password = document.getElementById('password').value;
@@ -88,7 +98,7 @@
 
       errorMsg.textContent = '';
 
-      if (!atlasUri || !username || !password) {
+      if (!businessName || !licenseKey || !atlasUri || !username || !password) {
         errorMsg.textContent = 'All fields are required.';
         return;
       }
@@ -104,7 +114,7 @@
       submitBtn.disabled = true;
       submitBtn.textContent = 'Setting up...';
 
-      const result = await window.setupAPI.submit({ atlasUri, username, password });
+      const result = await window.setupAPI.submit({ businessName, licenseKey, atlasUri, username, password });
 
       if (!result.success) {
         errorMsg.textContent = result.message || 'Setup failed. Please try again.';
