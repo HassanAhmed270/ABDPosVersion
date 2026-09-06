@@ -31,6 +31,19 @@
     },
     "asar": true,
     "npmRebuild": false,
+    "extraResources": [
+      {
+        "from": "electron/resources/mongodb-bin",
+        "to": "mongodb-bin"
+      },
+      { "from": "main.js", "to": "backend/main.js" },
+      { "from": "lib", "to": "backend/lib" },
+      { "from": "middleware", "to": "backend/middleware" },
+      { "from": "models", "to": "backend/models" },
+      { "from": "routes", "to": "backend/routes" },
+      { "from": "package.json", "to": "backend/package.json" },
+      { "from": "node_modules", "to": "backend/node_modules" }
+    ],
     "win": {
       "target": [
         {
@@ -54,6 +67,7 @@
     "express": "^5.1.0",
     "express-rate-limit": "^8.6.2",
     "jsonwebtoken": "^9.0.3",
+    "mongodb": "^6.9.0",
     "mongoose": "^8.18.0",
     "nodemon": "^3.1.14",
     "pdfkit": "^0.20.1",
