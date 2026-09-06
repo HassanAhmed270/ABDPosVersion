@@ -1621,14 +1621,6 @@ export default function Billing() {
                       <option value="cash">
                         Cash
                       </option>
-
-                      <option value="card">
-                        Card
-                      </option>
-
-                      <option value="other">
-                        Other
-                      </option>
                     </select>
                   </div>
 

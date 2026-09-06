@@ -11,7 +11,7 @@
     "build-frontend:electron": "npm --prefix frontend run build -- --mode electron",
     "electron": "electron electron/main.js",
     "electron:prod": "npm run build-frontend:electron && electron electron/main.js",
-    "electron:build": "npm run build-frontend:electron && electron-builder --win"
+    "electron:build": "npm run build-frontend:electron && node scripts/prepareBackendDeps.js && electron-builder --win"
   },
   "author": "Hassan",
   "license": "ISC",
@@ -29,7 +29,8 @@
     "extraMetadata": {
       "main": "electron/main.js"
     },
-    "asar": true,
+    "asar": false,
+    "afterPack": "scripts/afterPack.js",
     "npmRebuild": false,
     "extraResources": [
       {
@@ -43,7 +44,7 @@
       { "from": "routes", "to": "backend/routes" },
       { "from": "scripts/createUser.js", "to": "backend/scripts/createUser.js" },
       { "from": "package.json", "to": "backend/package.json" },
-      { "from": "node_modules", "to": "backend/node_modules" }
+      { "from": "backend-deps/node_modules", "to": "backend/node_modules" }
     ],
     "win": {
       "target": [
@@ -70,7 +71,6 @@
     "jsonwebtoken": "^9.0.3",
     "mongodb": "^6.9.0",
     "mongoose": "^8.18.0",
-    "nodemon": "^3.1.14",
     "pdfkit": "^0.20.1",
     "pino": "^10.3.1",
     "pino-http": "^11.0.0",
