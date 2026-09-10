@@ -16,6 +16,7 @@ const emptySupplierForm = {
   phone: '',
   email: '',
   address: '',
+  creditBalance: '0',
   paymentAmount: '',
 };
 
@@ -76,7 +77,13 @@ export default function Suppliers() {
     editingSupplier?.totalBalanceDue || 0
   );
 
-  const canAdjustSupplierBalance = editingSupplierBalance > 0;
+  const editingSupplierCreditBalance = roundMoney(
+    editingSupplier?.creditBalance || 0
+  );
+
+  const canAdjustSupplierBalance =
+    editingSupplierBalance > 0 ||
+    editingSupplierCreditBalance < 0;
 
   useEffect(() => {
     if (amountPaidManualRef.current) return;
@@ -200,6 +207,7 @@ export default function Suppliers() {
       phone: supplier.phone || '',
       email: supplier.email || '',
       address: supplier.address || '',
+      creditBalance: String(supplier.creditBalance || 0),
       paymentAmount: '',
     });
   };
@@ -216,12 +224,27 @@ export default function Suppliers() {
 
     try {
       if (!isEditing) {
+        const initialCreditBalance = Number(
+          supplierForm.creditBalance
+        );
+
+        if (!Number.isFinite(initialCreditBalance)) {
+          toast.error(
+            'Initial Balance must be a valid number.'
+          );
+          return;
+        }
+
         await api.saveSupplier({
           supplierName: supplierForm.supplierName,
           contactPerson: supplierForm.contactPerson,
           phone: supplierForm.phone,
           email: supplierForm.email,
           address: supplierForm.address,
+
+          // Positive = supplier credit
+          // Negative = amount owed to supplier
+          creditBalance: roundMoney(initialCreditBalance),
         });
 
         toast.success('Supplier added successfully.');
@@ -364,9 +387,7 @@ export default function Suppliers() {
       sp = parseFloat(trimmedSellingPrice);
 
       if (isNaN(sp) || sp < 0) {
-        toast.error(
-          'Retail price Optional'
-        );
+        toast.error('Retail price Optional');
         return;
       }
     }
@@ -375,14 +396,17 @@ export default function Suppliers() {
       const data = await api.recordPurchase({
         supplierName,
         billID: purchaseForm.billID.trim(),
-        items: [{
-          productID: productId,
-          quantity: qty,
-          unitCost: cost,
-          ...(sp !== undefined ? { sellingPrice: sp } : {}),
-        }],
+        items: [
+          {
+            productID: productId,
+            quantity: qty,
+            unitCost: cost,
+            ...(sp !== undefined ? { sellingPrice: sp } : {}),
+          },
+        ],
         amountPaid: parseFloat(amountPaid) || 0,
-      })
+      });
+
       const lines = [
         `Purchase ${data.purchaseID} recorded.`,
       ];
@@ -526,8 +550,8 @@ export default function Suppliers() {
                               )
                             }
                             className={`border-b hover:bg-gray-50 cursor-pointer ${expandedName === s.supplierName
-                              ? 'bg-blue-50'
-                              : ''
+                                ? 'bg-blue-50'
+                                : ''
                               }`}
                           >
                             <td className="py-2 px-3">
@@ -633,11 +657,11 @@ export default function Suppliers() {
                                         <th className="p-1 text-left border">
                                           Purchase ID
                                         </th>
-                                       
 
                                         <th className="p-1 text-left border">
                                           Bill ID
                                         </th>
+
                                         <th className="p-1 text-left border">
                                           Date
                                         </th>
@@ -657,8 +681,6 @@ export default function Suppliers() {
                                         <th className="p-1 text-right border">
                                           Status
                                         </th>
-
-                                       
                                       </tr>
                                     </thead>
 
@@ -676,6 +698,7 @@ export default function Suppliers() {
                                             <td className="p-1 border">
                                               {p.purchaseID}
                                             </td>
+
                                             <td className="p-1 border">
                                               {p.billID || '—'}
                                             </td>
@@ -709,10 +732,10 @@ export default function Suppliers() {
 
                                             <td
                                               className={`p-1 border text-right ${stillOwes
-                                                ? 'text-red-700 font-semibold'
-                                                : madeCredit
-                                                  ? 'text-green-700 font-semibold'
-                                                  : 'text-gray-500'
+                                                  ? 'text-red-700 font-semibold'
+                                                  : madeCredit
+                                                    ? 'text-green-700 font-semibold'
+                                                    : 'text-gray-500'
                                                 }`}
                                             >
                                               {stillOwes
@@ -725,7 +748,6 @@ export default function Suppliers() {
                                                   )}`
                                                   : 'Settled'}
                                             </td>
-
                                           </tr>
                                         );
                                       })}
@@ -772,8 +794,8 @@ export default function Suppliers() {
                       }
                       placeholder="Supplier name"
                       className={`border rounded px-3 py-2 w-full ${editingSupplierName
-                        ? 'bg-gray-100 cursor-not-allowed'
-                        : ''
+                          ? 'bg-gray-100 cursor-not-allowed'
+                          : ''
                         }`}
                       readOnly={Boolean(editingSupplierName)}
                     />
@@ -830,6 +852,32 @@ export default function Suppliers() {
                       className="border rounded px-3 py-2 w-full"
                     />
 
+                    {!editingSupplierName && (
+                      <div>
+                        <label className="block font-medium mb-1">
+                          Initial Balance
+                        </label>
+
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={supplierForm.creditBalance}
+                          onChange={(e) =>
+                            setSupplierForm({
+                              ...supplierForm,
+                              creditBalance: e.target.value,
+                            })
+                          }
+                          placeholder="0"
+                          className="border rounded px-3 py-2 w-full"
+                        />
+
+                        <p className="text-xs text-gray-500 mt-1">
+                          Positive = supplier credit, negative = amount owed to supplier.
+                        </p>
+                      </div>
+                    )}
+
                     {editingSupplierName &&
                       canAdjustSupplierBalance && (
                         <div className="pt-2 border-t border-gray-200">
@@ -838,12 +886,8 @@ export default function Suppliers() {
                           </label>
 
                           <p className="text-xs text-gray-500 mb-2">
-                            Applies the payment to this supplier's
-                            existing outstanding purchases. It does not
-                            create a new purchase or change supplier
-                            credit.
+                            Applies the payment to outstanding purchases first. Any remaining amount reduces what we owe the supplier and can become supplier credit.
                           </p>
-
                           <input
                             type="number"
                             step="0.01"
@@ -923,9 +967,13 @@ export default function Suppliers() {
                   ))}
                 </select>
               </div>
+
               <div>
                 <label className="block text-sm font-medium mb-1">
-                  Bill ID / Bill No. <span className="text-gray-500">(Optional)</span>
+                  Bill ID / Bill No.{' '}
+                  <span className="text-gray-500">
+                    (Optional)
+                  </span>
                 </label>
 
                 <input
@@ -941,6 +989,7 @@ export default function Suppliers() {
                   className="w-full rounded-md border px-3 py-2"
                 />
               </div>
+
               <div>
                 <label className="block mb-1 font-medium">
                   Product

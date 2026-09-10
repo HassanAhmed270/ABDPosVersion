@@ -35,7 +35,7 @@ const MONGO_URI =
   ||
   (isProduction
     ? null
-    : 'mongodb://localhost:27017/billing_system');
+    : 'mongodb://localhost:27017/bpiolsABD');
 
 const DRAFT_IDLE_TIMEOUT_MS =
   parseInt(process.env.DRAFT_IDLE_TIMEOUT_MS, 10) ||

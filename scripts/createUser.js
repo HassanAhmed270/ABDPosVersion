@@ -14,7 +14,7 @@ async function main() {
     process.exit(1);
   }
 
-  const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/billing_system';
+  const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/bpiolsABD';
   await mongoose.connect(MONGO_URI);
 
   const passwordHash = await bcrypt.hash(password, 12);

@@ -18,7 +18,20 @@ const crypto = require('crypto');
 const BACKEND_PORT = 3177; // matches the non-default-port convention used
                             // for mongod, for the same collision reason.
 const HEALTH_CHECK_INTERVAL_MS = 250;
-const HEALTH_CHECK_TIMEOUT_MS = 15000;
+// Bumped from 15s: a brand-new, empty local Mongo data directory
+// (first run only, on the very first install) building its initial
+// WiredTiger files/indexes — plus Windows Defender's real-time scan of
+// a freshly-unpacked node.exe/backend bundle on its very first
+// execution — can both eat into this. Every launch after the first is
+// consistently fast, since neither of those costs repeats.
+const HEALTH_CHECK_TIMEOUT_MS = 20000;
+// Silently retries a failed cold start this many times, with a short
+// pause between attempts, before actually surfacing anything to the
+// user — see start(). Covers exactly the first-run-only slow cases
+// above without ever showing an error dialog for something that
+// resolves itself moments later.
+const START_ATTEMPTS = 3;
+const RETRY_DELAY_MS = 1500;
 
 let backendProcess = null;
 
@@ -93,7 +106,7 @@ function getLogPath() {
   return path.join(dir, 'backend.log');
 }
 
-async function start({ mongoPort }) {
+async function startOnce({ mongoPort }) {
   if (backendProcess) return { port: BACKEND_PORT };
 
   const entry = resolveBackendEntry();
@@ -101,7 +114,7 @@ async function start({ mongoPort }) {
   const logPath = getLogPath();
   const logStream = fs.createWriteStream(logPath, { flags: 'a' });
 
-  backendProcess = spawn(
+  const proc = spawn(
     process.execPath, // reuse Electron's own bundled Node, no separate
                        // Node install required on the client machine
     [entry],
@@ -109,7 +122,7 @@ async function start({ mongoPort }) {
       env: {
         ...process.env,
         PORT: String(BACKEND_PORT),
-        MONGO_URI: `mongodb://127.0.0.1:${mongoPort}/billing_system?directConnection=true`,
+        MONGO_URI: `mongodb://127.0.0.1:${mongoPort}/bpiolsABD?directConnection=true`,
         NODE_ENV: 'production',
         JWT_SECRET: jwtSecret,
         JWT_EXPIRES_IN: '8h',
@@ -129,38 +142,94 @@ async function start({ mongoPort }) {
     }
   );
 
-  backendProcess.stdout.pipe(logStream);
-  backendProcess.stderr.pipe(logStream);
+  backendProcess = proc;
 
-  let exitedEarly = false;
-  const earlyExitHandler = (code) => {
-    exitedEarly = true;
-    backendProcess = null;
-    throw new Error(`Backend process exited during startup (code ${code})`);
-  };
-  backendProcess.once('exit', earlyExitHandler);
+  proc.stdout.pipe(logStream);
+  proc.stderr.pipe(logStream);
+
+  // If the backend dies before it's healthy, this needs to fail the
+  // *same* graceful way waitForHealth's own timeout does — not throw
+  // inside the event listener itself. Throwing here runs outside the
+  // try/catch below entirely (event callbacks aren't part of that call
+  // stack), so it became an uncaught exception that took down the whole
+  // Electron main process — that was the "BPIOLS crashed" dialog.
+  // Instead, track the exit and let it lose (or win) a Promise.race
+  // against the health check, same as any other startup failure.
+  let earlyExitError = null;
+  const earlyExit = new Promise((resolveExit) => {
+    proc.once('exit', (code, signal) => {
+      if (backendProcess === proc) {
+        earlyExitError = new Error(
+          `Backend process exited during startup (code ${code}, signal ${signal})`
+        );
+        backendProcess = null;
+      }
+      resolveExit();
+    });
+  });
+
+  const healthPromise = waitForHealth(BACKEND_PORT, HEALTH_CHECK_TIMEOUT_MS);
+  const exitPromise = earlyExit.then(() => {
+    if (earlyExitError) throw earlyExitError;
+  });
+
+  // Whichever of these loses the race below settles later on its own —
+  // give it a harmless catch so that doesn't surface as an unhandled
+  // promise rejection.
+  healthPromise.catch(() => {});
+  exitPromise.catch(() => {});
 
   try {
-    await waitForHealth(BACKEND_PORT, HEALTH_CHECK_TIMEOUT_MS);
+    await Promise.race([healthPromise, exitPromise]);
   } catch (err) {
-    if (!exitedEarly && backendProcess) {
-      backendProcess.kill();
+    if (backendProcess === proc) {
+      proc.kill();
       backendProcess = null;
     }
     throw err;
   }
 
-  backendProcess.removeListener('exit', earlyExitHandler);
-
-  backendProcess.once('exit', (code, signal) => {
+  // Startup succeeded — swap to the steady-state exit handler (a crash
+  // *after* this point is a genuinely different situation, logged but
+  // not part of startup at all).
+  proc.once('exit', (code, signal) => {
     const wasProcess = backendProcess;
     backendProcess = null;
-    if (wasProcess && !wasProcess.__expectedShutdown) {
+    if (wasProcess === proc && !proc.__expectedShutdown) {
       console.error(`Backend process exited unexpectedly (code ${code}, signal ${signal})`);
     }
   });
 
   return { port: BACKEND_PORT };
+}
+
+// Silently retries a failed cold start a couple of times before ever
+// throwing up to the caller (which is what actually shows the user an
+// error dialog and quits — see the outer main.js). Covers the known
+// first-run-only slow/flaky cases above so a real user essentially
+// never sees the dialog for something that would have worked seconds
+// later anyway; only a genuinely broken install still fails after all
+// attempts, in the same amount of time as before (attempt 1) plus a
+// few extra seconds.
+async function start(opts) {
+  let lastErr;
+
+  for (let attempt = 1; attempt <= START_ATTEMPTS; attempt++) {
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      return await startOnce(opts);
+    } catch (err) {
+      lastErr = err;
+      console.error(`[backend] start attempt ${attempt} failed: ${err.message}`);
+
+      if (attempt < START_ATTEMPTS) {
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
+      }
+    }
+  }
+
+  throw lastErr;
 }
 
 function stop() {

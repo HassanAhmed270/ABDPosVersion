@@ -53,7 +53,7 @@ async function main() {
   console.log('Connecting to Atlas...');
   const atlasClient = new MongoClient(atlasUri);
   await atlasClient.connect();
-  const atlasDb = atlasClient.db('billing_system');
+  const atlasDb = atlasClient.db('bpiolsABD');
 
   const orders = await atlasDb.collection('orders').find({}, { projection: { orderID: 1 } }).toArray();
   const invoices = await atlasDb.collection('paymentinvoices').find({}, { projection: { invoiceNumber: 1 } }).toArray();
@@ -67,9 +67,9 @@ async function main() {
   console.log(`Highest existing PINV- number in Atlas: ${maxPaymentInvoice}`);
 
   console.log('Connecting to local mongod...');
-  const localClient = new MongoClient('mongodb://127.0.0.1:27117/billing_system?directConnection=true');
+  const localClient = new MongoClient('mongodb://127.0.0.1:27117/bpiolsABD?directConnection=true');
   await localClient.connect();
-  const localDb = localClient.db('billing_system');
+  const localDb = localClient.db('bpiolsABD');
 
   await seedCounter(localDb, 'invoiceId', maxInvoice);
   await seedCounter(localDb, 'paymentInvoiceId', maxPaymentInvoice);

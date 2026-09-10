@@ -38,7 +38,7 @@ const supplierSchema = new Schema({
   address: { type: String, default: '' },
   purchases: [purchaseSchema],
   billID: { type: String, default: '' },
-  creditBalance: { type: Number, min: 0, default: 0 }
+  creditBalance: { type: Number,  default: 0 }
 }, { timestamps: true });
 
 

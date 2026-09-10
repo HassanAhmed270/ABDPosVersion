@@ -268,8 +268,8 @@ async function runOnce({ mongoPort }) {
     await atlasClient.connect();
   }
 
-  const localDb = localClient.db('billing_system');
-  const atlasDb = atlasClient.db('billing_system');
+  const localDb = localClient.db('bpiolsABD');
+  const atlasDb = atlasClient.db('bpiolsABD');
 
   for (const collectionName of SYNCED_COLLECTIONS) {
     try {

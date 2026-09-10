@@ -7,7 +7,7 @@ const { MongoClient } = require('mongodb');
   try {
     await client.connect();
 
-    const db = client.db('billing_system');
+    const db = client.db('bpiolsABD');
     const customers = db.collection('customers');
 
     // Move Hassan temporarily so #0001 becomes available

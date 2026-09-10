@@ -45,7 +45,7 @@ async function main() {
 
   const uri =
     target === 'local'
-      ? 'mongodb://127.0.0.1:27117/billing_system?directConnection=true'
+      ? 'mongodb://127.0.0.1:27117/bpiolsABD?directConnection=true'
       : process.env.ATLAS_MONGO_URI;
 
   if (!uri) {
@@ -56,7 +56,7 @@ async function main() {
   console.log(`Connecting to ${target}...`);
   const client = new MongoClient(uri);
   await client.connect();
-  const db = client.db('billing_system');
+  const db = client.db('bpiolsABD');
 
   for (const collectionName of COLLECTIONS) {
     const col = db.collection(collectionName);

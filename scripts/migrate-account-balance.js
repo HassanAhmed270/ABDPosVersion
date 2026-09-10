@@ -26,7 +26,7 @@ const { roundMoney } = require('../lib/money');
 
 async function main() {
   const apply = process.argv.includes('--apply');
-  const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/billing_system';
+  const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/bpiolsABD';
   await mongoose.connect(MONGO_URI);
 
   const collection = mongoose.connection.db.collection('customers');

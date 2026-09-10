@@ -112,14 +112,14 @@ function highestSeq(docs, field, prefix) {
 
 async function seedInvoiceCountersFromAtlas({ mongoPort, atlasUri }) {
   const atlasClient = new MongoClient(atlasUri);
-  const localClient = new MongoClient(`mongodb://127.0.0.1:${mongoPort}/billing_system?directConnection=true`);
+  const localClient = new MongoClient(`mongodb://127.0.0.1:${mongoPort}/bpiolsABD?directConnection=true`);
 
   try {
     await atlasClient.connect();
     await localClient.connect();
 
-    const atlasDb = atlasClient.db('billing_system');
-    const localDb = localClient.db('billing_system');
+    const atlasDb = atlasClient.db('bpiolsABD');
+    const localDb = localClient.db('bpiolsABD');
 
     const orders = await atlasDb.collection('orders').find({}, { projection: { orderID: 1 } }).toArray();
     const invoices = await atlasDb.collection('paymentinvoices').find({}, { projection: { invoiceNumber: 1 } }).toArray();
@@ -171,7 +171,7 @@ function createAdminAccount({ mongoPort, username, password }) {
       {
         env: {
           ...process.env,
-          MONGO_URI: `mongodb://127.0.0.1:${mongoPort}/billing_system?directConnection=true`,
+          MONGO_URI: `mongodb://127.0.0.1:${mongoPort}/bpiolsABD?directConnection=true`,
           ELECTRON_RUN_AS_NODE: '1',
         },
         windowsHide: true,

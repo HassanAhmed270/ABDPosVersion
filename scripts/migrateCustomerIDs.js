@@ -4,7 +4,7 @@ const { MongoClient } = require('mongodb');
 async function migrate(target) {
   const uri =
     target === 'local'
-      ? 'mongodb://127.0.0.1:27117/billing_system?directConnection=true'
+      ? 'mongodb://127.0.0.1:27117/bpiolsABD?directConnection=true'
       : process.env.ATLAS_MONGO_URI;
 
   if (!uri) {
@@ -14,7 +14,7 @@ async function migrate(target) {
   const client = new MongoClient(uri);
   await client.connect();
 
-  const db = client.db('billing_system');
+  const db = client.db('bpiolsABD');
   const customers = db.collection('customers');
 
   const allCustomers = await customers

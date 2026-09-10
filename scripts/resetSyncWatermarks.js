@@ -7,9 +7,9 @@ const COLLECTIONS = [
 ];
 
 async function main() {
-  const client = new MongoClient('mongodb://127.0.0.1:27117/billing_system?directConnection=true');
+  const client = new MongoClient('mongodb://127.0.0.1:27117/bpiolsABD?directConnection=true');
   await client.connect();
-  const db = client.db('billing_system');
+  const db = client.db('bpiolsABD');
   const meta = db.collection('_syncMeta');
 
   for (const collectionName of COLLECTIONS) {
