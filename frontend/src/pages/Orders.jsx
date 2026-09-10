@@ -384,11 +384,20 @@ export default function Orders() {
         const retailPrice = Number(p.retailPrice || 0);
         const unitPrice = Number(p.unitPrice || 0);
         const total = Number(p.amount || 0);
+        // Retail is genuinely optional on a product (see Products.jsx's
+        // "—" treatment for an unset price) — an order line item can
+        // likewise have no real retail price on file. 0/null/undefined
+        // all mean "not provided" here, matching that same convention,
+        // so the reprinted receipt leaves the cell blank instead of
+        // printing a misleading "0.00".
+        const retailCell = retailPrice
+          ? `<td>${formatMoneyShort(retailPrice)}</td>`
+          : '<td></td>';
 
         return `
           <tr>
             <td class="item-name">${getProductName(p.productID)}</td>
-            <td>${formatMoneyShort(retailPrice)}</td>
+            ${retailCell}
             <td>${formatMoneyShort(unitPrice)}</td>
             <td>${quantity}</td>
             <td>${formatMoneyShort(total)}</td>
