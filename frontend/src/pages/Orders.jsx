@@ -535,176 +535,116 @@ export default function Orders() {
     }
   });
 
-  const handlePrintRevised = () => {
-    if (!detail) return;
-    const { order, refunds } = detail;
-    const now = new Date();
-    const itemRows = order.products
-      .map((p) => {
-        const quantity = Number(p.quantity || 0);
-        const retailPrice = Number(p.retailPrice || 0);
-        const unitPrice = Number(p.unitPrice || 0);
-        const total = Number(p.amount || 0);
-        const retailCell = retailPrice
-          ? `<td>${formatMoneyShort(retailPrice)}</td>`
-          : '<td></td>';
-        return `
-          <tr>
-            <td class="item-name">${getProductName(p.productID)}</td>
-            ${retailCell}
-            <td>${formatMoneyShort(unitPrice)}</td>
-            <td>${quantity}</td>
-            <td>${formatMoneyShort(total)}</td>
-          </tr>
-        `;
-      })
-      .join('');
-    const editRows = (order.editHistory || [])
-      .map((e) => {
-        const settlementLabel =
-          e.settlement === 'credit'
-            ? `Store Credit: ${formatMoney(e.creditAmount || 0)}`
-            : e.settlement === 'cash'
-              ? `Cash Back: ${formatMoney(e.creditAmount || 0)}`
-              : '—';
-        return `
-          <tr>
-            <td>${e.productID}</td>
-            <td>${e.originalQty} → ${e.newQty}</td>
-            <td>${e.action}</td>
-            <td>${e.editedBy}</td>
-            <td>${new Date(e.editedAt).toLocaleString()}</td>
-            <td>${e.reason}</td>
-            <td>${settlementLabel}</td>
-          </tr>
-        `;
-      })
-      .join('');
-    const refundRows = (refunds || [])
-      .map(
-        (r) => `
-          <tr>
-            <td>${formatMoney(r.refundAmount)}</td>
-            <td>${r.processedBy}</td>
-            <td>${new Date(r.refundDate).toLocaleString()}</td>
-            <td>${r.reason || ''}</td>
-            <td>${r.settlement || 'none'}</td>
-          </tr>
-        `
-      )
-      .join('');
-    printReceipt(`
-      <div class="receipt">
-        <div class="shop-name">${SHOP_NAME}</div>
-        <div class="shop-line">${SHOP_ADDRESS}</div>
-        <div class="shop-line">Phone: ${SHOP_PHONE}</div>
-        <hr class="sep-solid" />
-        <div class="meta-row">
-          <span>
-            Revised Receipt${order.status === 'refunded' ? ' (REFUNDED)' : ''}
-          </span>
-          <span>${now.toLocaleDateString()}</span>
-        </div>
-        <div class="meta-row">
-          <span>Order: ${order.orderID}</span>
-          <span>${now.toLocaleTimeString()}</span>
-        </div>
-        <div>Customer Name: ${order.customerName}</div>
-        ${order.offlineOrigin
-        ? '<div class="offline-banner">OFFLINE SALE — SYNCED</div>'
-        : ''
-      }
-        <hr class="sep" />
-        <table class="items">
-          <colgroup>
-            <col class="col-item" />
-            <col class="col-rate" />
-            <col class="col-rate" />
-            <col class="col-qty" />
-            <col class="col-total" />
-          </colgroup>
-          <thead>
-            <tr>
-              <th>Item</th>
-              <th>Retail</th>
-              <th>Rate</th>
-              <th>Qty</th>
-              <th>Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${itemRows}
-          </tbody>
-        </table>
-        <hr class="sep" />
-        <div class="totals-row grand">
-          <span>Grand Total</span>
-          <span>${formatMoney(order.totalAmount)}</span>
-        </div>
-        ${order.creditApplied > 0
-        ? `
-              <div class="totals-row">
-                <span>Store Credit Applied</span>
-                <span>${formatMoney(order.creditApplied)}</span>
-              </div>
-            `
-        : ''
-      }
-        <div class="totals-row">
-          <span>Paid</span>
-          <span>${formatMoney(order.amountPaid)}</span>
-        </div>
-        <div class="totals-row">
-          <span>Balance Due</span>
-          <span>${formatMoney(order.balanceDue)}</span>
-        </div>
-        <hr class="sep-solid" />
-        <div class="footer">THANK YOU! VISIT AGAIN</div>
+const handlePrintRevised = () => {
+  if (!detail) return;
+  const { order } = detail;
+  const now = new Date();
+
+  const itemRows = order.products
+    .map((p) => {
+      const quantity = Number(p.quantity || 0);
+      const unitPrice = Number(p.unitPrice || 0);
+      const total = Number(p.amount || 0);
+
+      return `
+        <tr>
+          <td class="item-name">${getProductName(p.productID)}</td>
+          <td>${formatMoneyShort(unitPrice)}</td>
+          <td>${quantity}</td>
+          <td>${formatMoneyShort(total)}</td>
+        </tr>
+      `;
+    })
+    .join('');
+
+  const creditGenerated = (order.editHistory || [])
+    .filter((e) => e.settlement === 'credit')
+    .reduce((sum, e) => sum + Number(e.creditAmount || 0), 0);
+
+  const currentBalanceDue = Number(order.balanceDue || 0);
+  const oldBalance = -creditGenerated;
+  const netBalance = oldBalance + currentBalanceDue;
+
+  printReceipt(`
+    <div class="receipt">
+      <div class="shop-name">${SHOP_NAME}</div>
+      <div class="shop-line">${SHOP_ADDRESS}</div>
+      <div class="shop-line">Phone: ${SHOP_PHONE}</div>
+
+      <hr class="sep-solid" />
+
+      <div class="meta-row">
+        <span>
+          Revised Receipt${order.status === 'refunded' ? ' (REFUNDED)' : ''}
+        </span>
+        <span>${now.toLocaleDateString()}</span>
       </div>
-      ${editRows
-        ? `
-            <div class="edit-history">
-              <h3>Edit History</h3>
-              <table>
-                <thead>
-                  <tr>
-                    <th>Item</th>
-                    <th>Qty</th>
-                    <th>Action</th>
-                    <th>By</th>
-                    <th>When</th>
-                    <th>Reason</th>
-                    <th>Settlement</th>
-                  </tr>
-                </thead>
-                <tbody>${editRows}</tbody>
-              </table>
-            </div>
-          `
-        : ''
+
+      <div class="meta-row">
+        <span>Order: ${order.orderID}</span>
+        <span>${now.toLocaleTimeString()}</span>
+      </div>
+
+      <div>Customer Name: ${order.customerName}</div>
+
+      ${
+        order.offlineOrigin
+          ? '<div class="offline-banner">OFFLINE SALE — SYNCED</div>'
+          : ''
       }
-      ${refundRows
-        ? `
-            <div class="edit-history">
-              <h3>Refunds</h3>
-              <table>
-                <thead>
-                  <tr>
-                    <th>Amount</th>
-                    <th>By</th>
-                    <th>When</th>
-                    <th>Reason</th>
-                    <th>Settlement</th>
-                  </tr>
-                </thead>
-                <tbody>${refundRows}</tbody>
-              </table>
-            </div>
-          `
-        : ''
-      }
-    `);
-  };
+
+      <hr class="sep" />
+
+      <table class="items">
+        <colgroup>
+          <col class="col-item" />
+          <col class="col-rate" />
+          <col class="col-qty" />
+          <col class="col-total" />
+        </colgroup>
+
+        <thead>
+          <tr>
+            <th>Item</th>
+            <th>Rate</th>
+            <th>Qty</th>
+            <th>Total</th>
+          </tr>
+        </thead>
+
+        <tbody>
+          ${itemRows}
+        </tbody>
+      </table>
+
+      <hr class="sep" />
+
+      <div class="totals-row grand">
+        <span>Total Balance</span>
+        <span>${formatMoney(order.totalAmount)}</span>
+      </div>
+
+      <div class="totals-row">
+        <span>Old Balance</span>
+        <span>${formatMoney(oldBalance)}</span>
+      </div>
+
+      <div class="totals-row">
+        <span>Balance Due</span>
+        <span>${formatMoney(currentBalanceDue)}</span>
+      </div>
+
+      <div class="totals-row grand">
+        <span>Net Balance</span>
+        <span>${formatMoney(netBalance)}</span>
+      </div>
+
+      <hr class="sep-solid" />
+
+      <div class="footer">THANK YOU! VISIT AGAIN</div>
+    </div>
+  `);
+};
 
   return (
     <div className="flex h-screen">
