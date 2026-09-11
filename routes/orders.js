@@ -191,7 +191,7 @@ async function applyLineReduction(order, productID, newQty, reason, action, edit
 // editHistory entry with action 'add'. Rejects a productID the order
 // already carries a line for — quantity there stays applyLineReduction's
 // job, keeping the two paths from fighting over the same line's fields.
-async function applyLineAddition(order, productID, quantity, reason, editedBy, session) {
+async function applyLineAddition(order, productID, quantity, unitPrice, reason, editedBy, session) {
   if (order.products.some((p) => p.productID === productID)) {
     throw new AppError(400, `Order ${order.orderID} already has a line item for ${productID} — reduce or remove it via edit instead of adding it again.`);
   }
@@ -204,11 +204,8 @@ async function applyLineAddition(order, productID, quantity, reason, editedBy, s
     throw new AppError(400, `Product ${productID} does not exist.`);
   }
 
-  // No catalog price set is treated the same as this admin edit flow has
-  // always treated it — falls back to 0 rather than propagating null into
-  // the money math (roundMoney(null * n) would rely on NaN coercion).
-  const currentPrice = getLatestSellingPrice(product) ?? 0;
-  const amount = roundMoney(currentPrice * quantity);
+  const retailPrice = getLatestSellingPrice(product) ?? null;
+  const amount = roundMoney(unitPrice * quantity);
 
   const updated = await Product.findOneAndUpdate(
     { productID, quantity: { $gte: quantity } },
@@ -225,6 +222,8 @@ async function applyLineAddition(order, productID, quantity, reason, editedBy, s
   order.products.push({
     productID,
     quantity,
+    retailPrice,
+    unitPrice,
     amount,
     discount: 0,
     discountType: 'none',
@@ -239,7 +238,7 @@ async function applyLineAddition(order, productID, quantity, reason, editedBy, s
 }
 
 router.post('/api/order/:orderID/edit', requireAuth, requireAdmin, asyncHandler(async (req, res) => {
-  const { productID, newQty, reason, action, quantity } = req.body;
+  const { productID, newQty, reason, action, quantity, unitPrice } = req.body;
   const { orderID } = req.params;
   const isAdd = action === 'add';
 
@@ -257,6 +256,10 @@ router.post('/api/order/:orderID/edit', requireAuth, requireAdmin, asyncHandler(
     qty = parseInt(quantity);
     if (!Number.isInteger(qty) || qty <= 0) {
       return res.status(400).json({ success: false, message: 'Invalid quantity to add.' });
+    }
+    const parsedUnitPrice = Number(unitPrice);
+    if (!Number.isFinite(parsedUnitPrice) || parsedUnitPrice <= 0) {
+      return res.status(400).json({ success: false, message: 'Invalid unit price.' });
     }
   } else {
     qty = parseInt(newQty);
@@ -285,21 +288,21 @@ router.post('/api/order/:orderID/edit', requireAuth, requireAdmin, asyncHandler(
       const beforeBalanceDue = order.balanceDue;
       let beforeCustomer = null;
 
-if (order.customerName !== WALKIN_CUSTOMER) {
-  beforeCustomer = await Customer
-    .findOne({ customerName: order.customerName })
-    .session(session);
+      if (order.customerName !== WALKIN_CUSTOMER) {
+        beforeCustomer = await Customer
+          .findOne({ customerName: order.customerName })
+          .session(session);
 
-  if (!beforeCustomer) {
-    throw new AppError(
-      400,
-      `Customer "${order.customerName}" no longer exists.`
-    );
-  }
-}
+        if (!beforeCustomer) {
+          throw new AppError(
+            400,
+            `Customer "${order.customerName}" no longer exists.`
+          );
+        }
+      }
       const historyStartIdx = order.editHistory.length;
       if (isAdd) {
-        await applyLineAddition(order, productID, qty, reason.trim(), req.user.username, session);
+        await applyLineAddition(order, productID, qty, Number(unitPrice), reason.trim(), req.user.username, session);
       } else {
         await applyLineReduction(order, productID, qty, reason.trim(), 'edit', req.user.username, session);
       }
@@ -327,11 +330,11 @@ if (order.customerName !== WALKIN_CUSTOMER) {
       await applyCustomerAccountDelta(Customer, order.customerName, accountDelta, session);
       let afterCustomer = null;
 
-if (order.customerName !== WALKIN_CUSTOMER) {
-  afterCustomer = await Customer
-    .findOne({ customerName: order.customerName })
-    .session(session);
-}
+      if (order.customerName !== WALKIN_CUSTOMER) {
+        afterCustomer = await Customer
+          .findOne({ customerName: order.customerName })
+          .session(session);
+      }
       const customerUpdate = {
         $set: {
           'orders.$.totalAmount': order.totalAmount,
@@ -356,42 +359,42 @@ if (order.customerName !== WALKIN_CUSTOMER) {
         }
       }
       await logAudit(
-  {
-    action: 'order.edited',
+        {
+          action: 'order.edited',
 
-    actor: {
-      username: req.user.username,
-      role: req.user.role,
-    },
+          actor: {
+            username: req.user.username,
+            role: req.user.role,
+          },
 
-    targetType: 'order',
-    targetId: order.orderID,
+          targetType: 'order',
+          targetId: order.orderID,
 
-    before: {
-      order: orderFinancialSnapshot(beforeOrder),
+          before: {
+            order: orderFinancialSnapshot(beforeOrder),
 
-      customer:
-        customerFinancialSnapshot(beforeCustomer),
+            customer:
+              customerFinancialSnapshot(beforeCustomer),
 
-      changes: {
-        type: 'edit',
-      },
-    },
+            changes: {
+              type: 'edit',
+            },
+          },
 
-    after: {
-      order: orderFinancialSnapshot(order),
+          after: {
+            order: orderFinancialSnapshot(order),
 
-      customer:
-        customerFinancialSnapshot(afterCustomer),
+            customer:
+              customerFinancialSnapshot(afterCustomer),
 
-      changes: {
-        type: 'edit',
-        creditGenerated: roundMoney(creditGenerated),
-      },
-    },
-  },
-  session
-);
+            changes: {
+              type: 'edit',
+              creditGenerated: roundMoney(creditGenerated),
+            },
+          },
+        },
+        session
+      );
 
       updatedOrder = order;
     });
@@ -539,14 +542,14 @@ router.post('/api/order/:orderID/refund', requireAuth, requireAdmin, asyncHandle
       }
       let beforeCustomer = null;
 
-if (order.customerName !== WALKIN_CUSTOMER) {
-  beforeCustomer = await Customer
-    .findOne({ customerName: order.customerName })
-    .session(session);
-}
+      if (order.customerName !== WALKIN_CUSTOMER) {
+        beforeCustomer = await Customer
+          .findOne({ customerName: order.customerName })
+          .session(session);
+      }
       const beforeOrder = order.toObject();
       const beforeBalanceDue = order.balanceDue;
-      
+
       const refundedItems = [];
       const historyStartIdx = order.editHistory.length;
       let refundAmount = 0;
@@ -614,11 +617,11 @@ if (order.customerName !== WALKIN_CUSTOMER) {
       await applyCustomerAccountDelta(Customer, order.customerName, accountDelta, session);
       let afterCustomer = null;
 
-if (order.customerName !== WALKIN_CUSTOMER) {
-  afterCustomer = await Customer
-    .findOne({ customerName: order.customerName })
-    .session(session);
-}
+      if (order.customerName !== WALKIN_CUSTOMER) {
+        afterCustomer = await Customer
+          .findOne({ customerName: order.customerName })
+          .session(session);
+      }
       const customerUpdate = {
         $set: {
           'orders.$.totalAmount': order.totalAmount,
@@ -636,43 +639,43 @@ if (order.customerName !== WALKIN_CUSTOMER) {
       }
 
       await logAudit(
-  {
-    action: 'order.refunded',
+        {
+          action: 'order.refunded',
 
-    actor: {
-      username: req.user.username,
-      role: req.user.role,
-    },
+          actor: {
+            username: req.user.username,
+            role: req.user.role,
+          },
 
-    targetType: 'order',
-    targetId: order.orderID,
+          targetType: 'order',
+          targetId: order.orderID,
 
-    before: {
-      order: orderFinancialSnapshot(beforeOrder),
+          before: {
+            order: orderFinancialSnapshot(beforeOrder),
 
-      customer:
-        customerFinancialSnapshot(beforeCustomer),
+            customer:
+              customerFinancialSnapshot(beforeCustomer),
 
-      refund: null,
-    },
+            refund: null,
+          },
 
-    after: {
-      order: orderFinancialSnapshot(order),
+          after: {
+            order: orderFinancialSnapshot(order),
 
-      customer:
-        customerFinancialSnapshot(afterCustomer),
+            customer:
+              customerFinancialSnapshot(afterCustomer),
 
-      refund: {
-        refundAmount: roundMoney(refundAmount),
-        settlement: disposition,
-        creditGenerated: roundMoney(creditGenerated),
-        reason: reason.trim(),
-        items: refundedItems,
-      },
-    },
-  },
-  session
-);
+            refund: {
+              refundAmount: roundMoney(refundAmount),
+              settlement: disposition,
+              creditGenerated: roundMoney(creditGenerated),
+              reason: reason.trim(),
+              items: refundedItems,
+            },
+          },
+        },
+        session
+      );
 
       updatedOrder = order;
     });

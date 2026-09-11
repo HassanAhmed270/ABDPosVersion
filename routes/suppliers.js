@@ -24,7 +24,7 @@ router.get('/api/suppliers', requireAuth, asyncHandler(async (req, res) => {
   const { search = '', sortBy = 'supplierName', sortDir = 'asc' } = req.query;
   const { page, limit } = parsePagination(req.query);
   const filter = search
-  ? {
+    ? {
       $or: [
         {
           supplierName: {
@@ -46,7 +46,7 @@ router.get('/api/suppliers', requireAuth, asyncHandler(async (req, res) => {
         },
       ],
     }
-  : {};
+    : {};
   const suppliers = await Supplier.find(filter);
   const mapped = suppliers.map((s) => ({
     _id: s._id,
@@ -120,10 +120,7 @@ router.post('/api/supplier', requireAuth, requireAdmin, asyncHandler(async (req,
     amountPaid !== '';
   if (
     hasAmountPaid &&
-    (
-      !Number.isFinite(Number(amountPaid)) ||
-      Number(amountPaid) < 0
-    )
+    !Number.isFinite(Number(amountPaid))
   ) {
     return res.status(400).json({
       success: false,
@@ -217,12 +214,10 @@ router.post('/api/supplier', requireAuth, requireAdmin, asyncHandler(async (req,
           );
         }
       }
-      if (remainingAdjustment > 0) {
-        supplier.creditBalance = roundMoney(
-          (supplier.creditBalance || 0) +
-          remainingAdjustment
-        );
-      }
+      supplier.creditBalance = roundMoney(
+        (supplier.creditBalance || 0) +
+        remainingAdjustment
+      );
       await supplier.save({ session });
       if (adjustmentAmount > 0) {
         await logAudit(

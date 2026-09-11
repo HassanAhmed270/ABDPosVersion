@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from 'react';
+import  { Fragment, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import Sidebar from '../components/Sidebar';
 import Topbar from '../components/Topbar';
@@ -16,8 +16,8 @@ const emptySupplierForm = {
   phone: '',
   email: '',
   address: '',
-  creditBalance: '0',
-  paymentAmount: '',
+  balance: '0',
+  credit: '0',
 };
 
 const emptyPurchaseForm = {
@@ -62,15 +62,14 @@ export default function Suppliers() {
   );
 
   const previousBuyingPrice = selectedPurchaseProduct?.costPrice ?? null;
-
   const previousSellingPrice = selectedPurchaseProduct?.price ?? null;
 
   const amountPaidManualRef = useRef(false);
 
   const editingSupplier = editingSupplierName
     ? allSuppliers.find(
-      (s) => s.supplierName === editingSupplierName
-    )
+        (s) => s.supplierName === editingSupplierName
+      )
     : null;
 
   const editingSupplierBalance = roundMoney(
@@ -81,10 +80,6 @@ export default function Suppliers() {
     editingSupplier?.creditBalance || 0
   );
 
-  const canAdjustSupplierBalance =
-    editingSupplierBalance > 0 ||
-    editingSupplierCreditBalance < 0;
-
   useEffect(() => {
     if (amountPaidManualRef.current) return;
 
@@ -93,22 +88,23 @@ export default function Suppliers() {
 
     const computedTotal =
       Number.isInteger(qty) &&
-        qty > 0 &&
-        Number.isFinite(cost) &&
-        cost >= 0
+      qty > 0 &&
+      Number.isFinite(cost) &&
+      cost >= 0
         ? roundMoney(qty * cost)
         : '';
 
     setPurchaseForm((prev) => ({
       ...prev,
-      amountPaid: computedTotal === '' ? '' : String(computedTotal),
+      amountPaid:
+        computedTotal === '' ? '' : String(computedTotal),
     }));
   }, [purchaseForm.quantity, purchaseForm.unitCost]);
 
   const selectedSupplierCredit = purchaseForm.supplierName
     ? allSuppliers.find(
-      (s) => s.supplierName === purchaseForm.supplierName
-    )?.creditBalance ?? 0
+        (s) => s.supplierName === purchaseForm.supplierName
+      )?.creditBalance ?? 0
     : 0;
 
   const loadSuppliers = async () => {
@@ -143,7 +139,10 @@ export default function Suppliers() {
       setAllSuppliers(s.suppliers || []);
       setAllProducts(p.products || []);
     } catch (err) {
-      console.error('Failed to load dropdown data:', err.message);
+      console.error(
+        'Failed to load dropdown data:',
+        err.message
+      );
     }
   };
 
@@ -152,7 +151,9 @@ export default function Suppliers() {
   }, []);
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
+    const params = new URLSearchParams(
+      window.location.search
+    );
 
     if (params.get('action') !== 'restock') return;
 
@@ -182,7 +183,9 @@ export default function Suppliers() {
 
   const handleSort = (field) => {
     if (sortBy === field) {
-      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+      setSortDir((d) =>
+        d === 'asc' ? 'desc' : 'asc'
+      );
     } else {
       setSortBy(field);
       setSortDir('asc');
@@ -190,7 +193,10 @@ export default function Suppliers() {
   };
 
   const reloadEverything = async () => {
-    await Promise.all([loadSuppliers(), loadDropdownData()]);
+    await Promise.all([
+      loadSuppliers(),
+      loadDropdownData(),
+    ]);
   };
 
   const resetSupplierForm = () => {
@@ -201,14 +207,29 @@ export default function Suppliers() {
   const handleStartEditSupplier = (supplier) => {
     setEditingSupplierName(supplier.supplierName);
 
+    /*
+      Existing creditBalance is represented as:
+
+      positive = supplier credit
+      negative = amount owed to supplier
+
+      The edit fields are adjustment fields:
+
+      Balance = negative adjustment
+      Credit  = positive adjustment
+
+      They are kept mutually exclusive, just like when
+      adding a supplier.
+    */
+
     setSupplierForm({
       supplierName: supplier.supplierName,
       contactPerson: supplier.contactPerson || '',
       phone: supplier.phone || '',
       email: supplier.email || '',
       address: supplier.address || '',
-      creditBalance: String(supplier.creditBalance || 0),
-      paymentAmount: '',
+      balance: '0',
+      credit: '0',
     });
   };
 
@@ -223,98 +244,132 @@ export default function Suppliers() {
     const isEditing = Boolean(editingSupplierName);
 
     try {
+      /*
+       * ADD SUPPLIER
+       */
       if (!isEditing) {
-        const initialCreditBalance = Number(
-          supplierForm.creditBalance
+        const balance = Number(
+          supplierForm.balance || 0
         );
 
-        if (!Number.isFinite(initialCreditBalance)) {
+        const credit = Number(
+          supplierForm.credit || 0
+        );
+
+        if (
+          !Number.isFinite(balance) ||
+          !Number.isFinite(credit) ||
+          balance < 0 ||
+          credit < 0
+        ) {
           toast.error(
-            'Initial Balance must be a valid number.'
+            'Balance and Credit must be valid non-negative numbers.'
           );
           return;
         }
 
+        const initialCreditBalance = roundMoney(
+          credit - balance
+        );
+
         await api.saveSupplier({
-          supplierName: supplierForm.supplierName,
-          contactPerson: supplierForm.contactPerson,
+          supplierName:
+            supplierForm.supplierName,
+          contactPerson:
+            supplierForm.contactPerson,
           phone: supplierForm.phone,
           email: supplierForm.email,
           address: supplierForm.address,
 
-          // Positive = supplier credit
-          // Negative = amount owed to supplier
-          creditBalance: roundMoney(initialCreditBalance),
+          // positive = supplier credit
+          // negative = amount owed to supplier
+          creditBalance:
+            initialCreditBalance,
         });
 
-        toast.success('Supplier added successfully.');
+        toast.success(
+          'Supplier added successfully.'
+        );
 
         resetSupplierForm();
         await reloadEverything();
         return;
       }
 
-      const trimmedPayment = String(
-        supplierForm.paymentAmount ?? ''
-      ).trim();
+      /*
+       * EDIT SUPPLIER
+       *
+       * Balance and Credit are adjustments.
+       *
+       * Balance 500 => amountPaid -500
+       * Credit  500 => amountPaid +500
+       *
+       * If both somehow contain values:
+       * amountPaid = credit - balance
+       */
+      const balance = Number(
+        supplierForm.balance || 0
+      );
 
-      let paymentAmount = 0;
+      const credit = Number(
+        supplierForm.credit || 0
+      );
 
-      if (trimmedPayment !== '') {
-        paymentAmount = Number(trimmedPayment);
-
-        if (
-          !Number.isFinite(paymentAmount) ||
-          paymentAmount < 0
-        ) {
-          toast.error(
-            'Amount Paid / Balance Adjustment must be a valid non-negative number.'
-          );
-          return;
-        }
-
-        paymentAmount = roundMoney(paymentAmount);
+      if (
+        !Number.isFinite(balance) ||
+        !Number.isFinite(credit) ||
+        balance < 0 ||
+        credit < 0
+      ) {
+        toast.error(
+          'Balance and Credit must be valid non-negative numbers.'
+        );
+        return;
       }
+
+      const adjustmentAmount = roundMoney(
+        credit - balance
+      );
 
       const data = await api.saveSupplier({
         supplierName: editingSupplierName,
-        contactPerson: supplierForm.contactPerson,
+        contactPerson:
+          supplierForm.contactPerson,
         phone: supplierForm.phone,
         email: supplierForm.email,
         address: supplierForm.address,
-        ...(canAdjustSupplierBalance
-          ? { amountPaid: paymentAmount }
-          : {}),
+
+        /*
+         * Positive = increase supplier credit
+         * Negative = increase amount owed / reduce credit
+         */
+        amountPaid: adjustmentAmount,
       });
 
-      if (paymentAmount > 0 && canAdjustSupplierBalance) {
-        const unappliedAmount = roundMoney(
-          Number(data?.unappliedAmount || 0)
+      if (adjustmentAmount > 0) {
+        toast.success(
+          `Supplier updated. ${formatMoney(
+            adjustmentAmount
+          )} credit was added.`
         );
-
-        if (unappliedAmount > 0) {
-          toast.success(
-            `Supplier updated. ${formatMoney(
-              paymentAmount - unappliedAmount
-            )} was applied to outstanding purchases. ${formatMoney(
-              unappliedAmount
-            )} could not be applied because there was no remaining outstanding balance.`
-          );
-        } else {
-          toast.success(
-            `Supplier updated. ${formatMoney(
-              paymentAmount
-            )} payment was applied to outstanding purchases.`
-          );
-        }
+      } else if (adjustmentAmount < 0) {
+        toast.success(
+          `Supplier updated. ${formatMoney(
+            Math.abs(adjustmentAmount)
+          )} was added to the supplier balance.`
+        );
       } else {
-        toast.success('Supplier updated successfully.');
+        toast.success(
+          'Supplier updated successfully.'
+        );
       }
 
       resetSupplierForm();
       await reloadEverything();
     } catch (err) {
-      toast.error('Error saving supplier: ' + err.message);
+      toast.error(
+        'Error saving supplier: ' + err.message
+      );
     }
   };
 
@@ -334,17 +389,24 @@ export default function Suppliers() {
     try {
       await api.deleteSupplier(s.supplierName);
 
-      if (expandedName === s.supplierName) {
+      if (
+        expandedName === s.supplierName
+      ) {
         setExpandedName(null);
       }
 
-      if (editingSupplierName === s.supplierName) {
+      if (
+        editingSupplierName === s.supplierName
+      ) {
         resetSupplierForm();
       }
 
       await reloadEverything();
     } catch (err) {
-      toast.error('Failed to delete supplier: ' + err.message);
+      toast.error(
+        'Failed to delete supplier: ' +
+          err.message
+      );
     }
   };
 
@@ -401,10 +463,13 @@ export default function Suppliers() {
             productID: productId,
             quantity: qty,
             unitCost: cost,
-            ...(sp !== undefined ? { sellingPrice: sp } : {}),
+            ...(sp !== undefined
+              ? { sellingPrice: sp }
+              : {}),
           },
         ],
-        amountPaid: parseFloat(amountPaid) || 0,
+        amountPaid:
+          parseFloat(amountPaid) || 0,
       });
 
       const lines = [
@@ -420,7 +485,9 @@ export default function Suppliers() {
       }
 
       lines.push(
-        `Balance due to supplier: ${formatMoney(data.balanceDue)}`
+        `Balance due to supplier: ${formatMoney(
+          data.balanceDue
+        )}`
       );
 
       if (data.creditGenerated > 0) {
@@ -446,7 +513,10 @@ export default function Suppliers() {
 
       await reloadEverything();
     } catch (err) {
-      toast.error('Error recording purchase: ' + err.message);
+      toast.error(
+        'Error recording purchase: ' +
+          err.message
+      );
     }
   };
 
@@ -462,19 +532,24 @@ export default function Suppliers() {
             type="text"
             placeholder="Search suppliers..."
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) =>
+              setSearch(e.target.value)
+            }
             className="border rounded px-3 py-2 w-full sm:w-64"
           />
 
           {error && (
-            <p className="text-red-600 text-sm">{error}</p>
+            <p className="text-red-600 text-sm">
+              {error}
+            </p>
           )}
 
           <div className="bg-white border rounded-lg w-full">
             <div className="flex flex-col lg:flex-row">
               <div
-                className={`w-full ${isAdmin ? 'lg:w-2/3' : ''
-                  } flex flex-col overflow-x-auto`}
+                className={`w-full ${
+                  isAdmin ? 'lg:w-2/3' : ''
+                } flex flex-col overflow-x-auto`}
               >
                 <table className="w-full min-w-[640px] text-sm">
                   <thead>
@@ -540,19 +615,24 @@ export default function Suppliers() {
                       </tr>
                     ) : (
                       suppliers.map((s) => (
-                        <Fragment key={s.supplierName}>
+                        <Fragment
+                          key={s.supplierName}
+                        >
                           <tr
                             onClick={() =>
                               setExpandedName(
-                                expandedName === s.supplierName
+                                expandedName ===
+                                  s.supplierName
                                   ? null
                                   : s.supplierName
                               )
                             }
-                            className={`border-b hover:bg-gray-50 cursor-pointer ${expandedName === s.supplierName
+                            className={`border-b hover:bg-gray-50 cursor-pointer ${
+                              expandedName ===
+                              s.supplierName
                                 ? 'bg-blue-50'
                                 : ''
-                              }`}
+                            }`}
                           >
                             <td className="py-2 px-3">
                               {s.supplierName}
@@ -572,15 +652,20 @@ export default function Suppliers() {
 
                             <td className="py-2 px-3 text-right font-semibold">
                               {(() => {
-                                const netBalance = roundMoney(
-                                  (s.totalBalanceDue || 0) -
-                                  (s.creditBalance || 0)
-                                );
+                                const netBalance =
+                                  roundMoney(
+                                    (s.totalBalanceDue ||
+                                      0) -
+                                      (s.creditBalance ||
+                                        0)
+                                  );
 
                                 if (netBalance > 0) {
                                   return (
                                     <span className="text-red-700">
-                                      -{formatMoney(netBalance)}
+                                      -{formatMoney(
+                                        netBalance
+                                      )}
                                     </span>
                                   );
                                 }
@@ -611,7 +696,9 @@ export default function Suppliers() {
                                     type="button"
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      handleStartEditSupplier(s);
+                                      handleStartEditSupplier(
+                                        s
+                                      );
                                     }}
                                     className="text-blue-600 hover:text-blue-800"
                                     title="Edit supplier"
@@ -623,7 +710,9 @@ export default function Suppliers() {
                                     type="button"
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      handleDeleteSupplier(s);
+                                      handleDeleteSupplier(
+                                        s
+                                      );
                                     }}
                                     className="text-red-600 hover:text-red-800"
                                     title="Delete"
@@ -639,16 +728,22 @@ export default function Suppliers() {
                             </td>
                           </tr>
 
-                          {expandedName === s.supplierName && (
+                          {expandedName ===
+                            s.supplierName && (
                             <tr className="bg-gray-50">
-                              <td colSpan={6} className="p-4">
+                              <td
+                                colSpan={6}
+                                className="p-4"
+                              >
                                 <h4 className="font-medium text-sm mb-2">
                                   Purchase history
                                 </h4>
 
-                                {s.purchases.length === 0 ? (
+                                {s.purchases
+                                  .length === 0 ? (
                                   <p className="text-xs text-gray-400">
-                                    No purchases recorded yet.
+                                    No purchases
+                                    recorded yet.
                                   </p>
                                 ) : (
                                   <table className="w-full min-w-[640px] text-xs bg-white border-collapse">
@@ -685,72 +780,88 @@ export default function Suppliers() {
                                     </thead>
 
                                     <tbody>
-                                      {s.purchases.map((p) => {
-                                        const stillOwes =
-                                          p.balanceDue > 0;
+                                      {s.purchases.map(
+                                        (p) => {
+                                          const stillOwes =
+                                            p.balanceDue >
+                                            0;
 
-                                        const madeCredit =
-                                          !stillOwes &&
-                                          p.creditGenerated > 0;
+                                          const madeCredit =
+                                            !stillOwes &&
+                                            p.creditGenerated >
+                                              0;
 
-                                        return (
-                                          <tr key={p.purchaseID}>
-                                            <td className="p-1 border">
-                                              {p.purchaseID}
-                                            </td>
-
-                                            <td className="p-1 border">
-                                              {p.billID || '—'}
-                                            </td>
-
-                                            <td className="p-1 border">
-                                              {new Date(
-                                                p.date
-                                              ).toLocaleDateString()}
-                                            </td>
-
-                                            <td className="p-1 border">
-                                              {p.items
-                                                .map(
-                                                  (it) =>
-                                                    `${it.productID} x${it.quantity}`
-                                                )
-                                                .join(', ')}
-                                            </td>
-
-                                            <td className="p-1 border text-right">
-                                              {formatMoney(
-                                                p.totalAmount
-                                              )}
-                                            </td>
-
-                                            <td className="p-1 border text-right">
-                                              {formatMoney(
-                                                p.amountPaid
-                                              )}
-                                            </td>
-
-                                            <td
-                                              className={`p-1 border text-right ${stillOwes
-                                                  ? 'text-red-700 font-semibold'
-                                                  : madeCredit
-                                                    ? 'text-green-700 font-semibold'
-                                                    : 'text-gray-500'
-                                                }`}
+                                          return (
+                                            <tr
+                                              key={
+                                                p.purchaseID
+                                              }
                                             >
-                                              {stillOwes
-                                                ? `Due ${formatMoney(
-                                                  p.balanceDue
-                                                )}`
-                                                : madeCredit
-                                                  ? `Credit +${formatMoney(
-                                                    p.creditGenerated
-                                                  )}`
-                                                  : 'Settled'}
-                                            </td>
-                                          </tr>
-                                        );
-                                      })}
+                                              <td className="p-1 border">
+                                                {
+                                                  p.purchaseID
+                                                }
+                                              </td>
+
+                                              <td className="p-1 border">
+                                                {p.billID ||
+                                                  '—'}
+                                              </td>
+
+                                              <td className="p-1 border">
+                                                {new Date(
+                                                  p.date
+                                                ).toLocaleDateString()}
+                                              </td>
+
+                                              <td className="p-1 border">
+                                                {p.items
+                                                  .map(
+                                                    (
+                                                      it
+                                                    ) =>
+                                                      `${it.productID} x${it.quantity}`
+                                                  )
+                                                  .join(
+                                                    ', '
+                                                  )}
+                                              </td>
+
+                                              <td className="p-1 border text-right">
+                                                {formatMoney(
+                                                  p.totalAmount
+                                                )}
+                                              </td>
+
+                                              <td className="p-1 border text-right">
+                                                {formatMoney(
+                                                  p.amountPaid
+                                                )}
+                                              </td>
+
+                                              <td
+                                                className={`p-1 border text-right ${
+                                                  stillOwes
+                                                    ? 'text-red-700 font-semibold'
+                                                    : madeCredit
+                                                      ? 'text-green-700 font-semibold'
+                                                      : 'text-gray-500'
+                                                }`}
+                                              >
+                                                {stillOwes
+                                                  ? `Due ${formatMoney(
+                                                      p.balanceDue
+                                                    )}`
+                                                  : madeCredit
+                                                    ? `Credit +${formatMoney(
+                                                        p.creditGenerated
+                                                      )}`
+                                                    : 'Settled'}
+                                              </td>
+                                            </tr>
+                                          );
+                                        }
+                                      )}
                                     </tbody>
                                   </table>
                                 )}
@@ -785,28 +896,37 @@ export default function Suppliers() {
                   >
                     <input
                       type="text"
-                      value={supplierForm.supplierName}
+                      value={
+                        supplierForm.supplierName
+                      }
                       onChange={(e) =>
                         setSupplierForm({
                           ...supplierForm,
-                          supplierName: e.target.value,
+                          supplierName:
+                            e.target.value,
                         })
                       }
                       placeholder="Supplier name"
-                      className={`border rounded px-3 py-2 w-full ${editingSupplierName
+                      className={`border rounded px-3 py-2 w-full ${
+                        editingSupplierName
                           ? 'bg-gray-100 cursor-not-allowed'
                           : ''
-                        }`}
-                      readOnly={Boolean(editingSupplierName)}
+                      }`}
+                      readOnly={Boolean(
+                        editingSupplierName
+                      )}
                     />
 
                     <input
                       type="text"
-                      value={supplierForm.contactPerson}
+                      value={
+                        supplierForm.contactPerson
+                      }
                       onChange={(e) =>
                         setSupplierForm({
                           ...supplierForm,
-                          contactPerson: e.target.value,
+                          contactPerson:
+                            e.target.value,
                         })
                       }
                       placeholder="Contact person"
@@ -852,58 +972,73 @@ export default function Suppliers() {
                       className="border rounded px-3 py-2 w-full"
                     />
 
-                    {!editingSupplierName && (
-                      <div>
-                        <label className="block font-medium mb-1">
-                          Initial Balance
-                        </label>
-
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={supplierForm.creditBalance}
-                          onChange={(e) =>
-                            setSupplierForm({
-                              ...supplierForm,
-                              creditBalance: e.target.value,
-                            })
-                          }
-                          placeholder="0"
-                          className="border rounded px-3 py-2 w-full"
-                        />
-
-                        <p className="text-xs text-gray-500 mt-1">
-                          Positive = supplier credit, negative = amount owed to supplier.
-                        </p>
-                      </div>
-                    )}
-
-                    {editingSupplierName &&
-                      canAdjustSupplierBalance && (
-                        <div className="pt-2 border-t border-gray-200">
+                    <div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
                           <label className="block font-medium mb-1">
-                            Amount Paid / Balance Adjustment
+                            Balance
                           </label>
 
-                          <p className="text-xs text-gray-500 mb-2">
-                            Applies the payment to outstanding purchases first. Any remaining amount reduces what we owe the supplier and can become supplier credit.
-                          </p>
                           <input
                             type="number"
-                            step="0.01"
                             min="0"
-                            value={supplierForm.paymentAmount}
-                            onChange={(e) =>
+                            step="0.01"
+                            value={
+                              supplierForm.balance
+                            }
+                            onChange={(e) => {
+                              const value =
+                                e.target.value;
+
                               setSupplierForm({
                                 ...supplierForm,
-                                paymentAmount: e.target.value,
-                              })
-                            }
-                            placeholder="0 = no adjustment"
+                                balance: value,
+                                credit: value
+                                  ? '0'
+                                  : supplierForm.credit,
+                              });
+                            }}
+                            placeholder="0"
                             className="border rounded px-3 py-2 w-full"
                           />
                         </div>
-                      )}
+
+                        <div>
+                          <label className="block font-medium mb-1">
+                            Credit
+                          </label>
+
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={
+                              supplierForm.credit
+                            }
+                            onChange={(e) => {
+                              const value =
+                                e.target.value;
+
+                              setSupplierForm({
+                                ...supplierForm,
+                                credit: value,
+                                balance: value
+                                  ? '0'
+                                  : supplierForm.balance,
+                              });
+                            }}
+                            placeholder="0"
+                            className="border rounded px-3 py-2 w-full"
+                          />
+                        </div>
+                      </div>
+
+                      <p className="text-xs text-gray-500 mt-1">
+                        {editingSupplierName
+                          ? 'Balance adds to the amount owed. Credit adds to supplier credit.'
+                          : 'Balance = amount owed to supplier. Credit = supplier credit.'}
+                      </p>
+                    </div>
 
                     <div className="flex gap-2">
                       <button
@@ -918,7 +1053,9 @@ export default function Suppliers() {
                       {editingSupplierName && (
                         <button
                           type="button"
-                          onClick={handleCancelEdit}
+                          onClick={
+                            handleCancelEdit
+                          }
                           className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-100"
                         >
                           Cancel
@@ -946,16 +1083,21 @@ export default function Suppliers() {
                 </label>
 
                 <select
-                  value={purchaseForm.supplierName}
+                  value={
+                    purchaseForm.supplierName
+                  }
                   onChange={(e) =>
                     setPurchaseForm({
                       ...purchaseForm,
-                      supplierName: e.target.value,
+                      supplierName:
+                        e.target.value,
                     })
                   }
                   className="border rounded px-3 py-2 w-full"
                 >
-                  <option value="">Select supplier</option>
+                  <option value="">
+                    Select supplier
+                  </option>
 
                   {allSuppliers.map((s) => (
                     <option
@@ -996,23 +1138,29 @@ export default function Suppliers() {
                 </label>
 
                 <select
-                  value={purchaseForm.productId}
+                  value={
+                    purchaseForm.productId
+                  }
                   onChange={(e) =>
                     setPurchaseForm({
                       ...purchaseForm,
-                      productId: e.target.value,
+                      productId:
+                        e.target.value,
                     })
                   }
                   className="border rounded px-3 py-2 w-full"
                 >
-                  <option value="">Select product</option>
+                  <option value="">
+                    Select product
+                  </option>
 
                   {allProducts.map((p) => (
                     <option
                       key={p.productID}
                       value={p.productID}
                     >
-                      {p.productID} — {p.productName}
+                      {p.productID} —{' '}
+                      {p.productName}
                     </option>
                   ))}
                 </select>
@@ -1026,11 +1174,14 @@ export default function Suppliers() {
                 <input
                   type="number"
                   min="1"
-                  value={purchaseForm.quantity}
+                  value={
+                    purchaseForm.quantity
+                  }
                   onChange={(e) =>
                     setPurchaseForm({
                       ...purchaseForm,
-                      quantity: e.target.value,
+                      quantity:
+                        e.target.value,
                     })
                   }
                   className="border rounded px-3 py-2 w-full"
@@ -1042,24 +1193,31 @@ export default function Suppliers() {
                   Cost / Buying Price
                 </label>
 
-                {isAdmin && purchaseForm.productId && (
-                  <p className="text-xs text-gray-500 mb-1">
-                    Previous cost:{' '}
-                    <span className="font-medium text-gray-700">
-                      {formatMoney(previousBuyingPrice ?? 0)}
-                    </span>
-                  </p>
-                )}
+                {isAdmin &&
+                  purchaseForm.productId && (
+                    <p className="text-xs text-gray-500 mb-1">
+                      Previous cost:{' '}
+                      <span className="font-medium text-gray-700">
+                        {formatMoney(
+                          previousBuyingPrice ??
+                            0
+                        )}
+                      </span>
+                    </p>
+                  )}
 
                 <input
                   type="number"
                   step="0.01"
                   min="0"
-                  value={purchaseForm.unitCost}
+                  value={
+                    purchaseForm.unitCost
+                  }
                   onChange={(e) =>
                     setPurchaseForm({
                       ...purchaseForm,
-                      unitCost: e.target.value,
+                      unitCost:
+                        e.target.value,
                     })
                   }
                   className="border rounded px-3 py-2 w-full"
@@ -1071,26 +1229,33 @@ export default function Suppliers() {
                   Retail (optional)
                 </label>
 
-                {isAdmin && purchaseForm.productId && (
-                  <p className="text-xs text-gray-500 mb-1">
-                    Previous retail:{' '}
-                    <span className="font-medium text-gray-700">
-                      {previousSellingPrice == null
-                        ? 'Not set'
-                        : formatMoney(previousSellingPrice)}
-                    </span>
-                  </p>
-                )}
+                {isAdmin &&
+                  purchaseForm.productId && (
+                    <p className="text-xs text-gray-500 mb-1">
+                      Previous retail:{' '}
+                      <span className="font-medium text-gray-700">
+                        {previousSellingPrice ==
+                        null
+                          ? 'Not set'
+                          : formatMoney(
+                              previousSellingPrice
+                            )}
+                      </span>
+                    </p>
+                  )}
 
                 <input
                   type="number"
                   step="0.01"
                   min="0"
-                  value={purchaseForm.sellingPrice}
+                  value={
+                    purchaseForm.sellingPrice
+                  }
                   onChange={(e) =>
                     setPurchaseForm({
                       ...purchaseForm,
-                      sellingPrice: e.target.value,
+                      sellingPrice:
+                        e.target.value,
                     })
                   }
                   placeholder="Leave blank to keep unchanged"
@@ -1104,9 +1269,11 @@ export default function Suppliers() {
                 </label>
 
                 <p className="text-xs text-gray-500 mb-1">
-                  Auto-fills as quantity × cost — edit for a partial
-                  payment or overpayment.
-                  {selectedSupplierCredit > 0 &&
+                  Auto-fills as quantity × cost —
+                  edit for a partial payment or
+                  overpayment.
+                  {selectedSupplierCredit >
+                    0 &&
                     ` This supplier has ${formatMoney(
                       selectedSupplierCredit
                     )} credit — pay less if you want to use it.`}
@@ -1116,13 +1283,20 @@ export default function Suppliers() {
                   type="number"
                   step="0.01"
                   min="0"
-                  value={purchaseForm.amountPaid}
+                  value={
+                    purchaseForm.amountPaid
+                  }
                   onChange={(e) => {
-                    amountPaidManualRef.current = true;
-                    setPurchaseForm((prev) => ({
-                      ...prev,
-                      amountPaid: e.target.value,
-                    }));
+                    amountPaidManualRef.current =
+                      true;
+
+                    setPurchaseForm(
+                      (prev) => ({
+                        ...prev,
+                        amountPaid:
+                          e.target.value,
+                      })
+                    );
                   }}
                   placeholder="0 = nothing paid yet"
                   className="border rounded px-3 py-2 w-full"
@@ -1148,3 +1322,4 @@ export default function Suppliers() {
     </div>
   );
 }
+

@@ -30,6 +30,7 @@ const emptyForm = {
   emergencyMobile: '',
   email: '',
   address: '',
+  openingBalance: '',
   paymentAmount: '',
 };
 
@@ -62,16 +63,17 @@ export default function Customers() {
   const [showUndo, setShowUndo] = useState(false);
 
   // Prevent double-clicks from posting the same balance payment or
-  // duplicate customer twice (see lib/useSubmitGuard.js).
-  const { submitting: savingCustomer, guard: guardSaveCustomer } = useSubmitGuard();
+  // duplicate customer twice.
+  const {
+    submitting: savingCustomer,
+    guard: guardSaveCustomer,
+  } = useSubmitGuard();
 
   // The PINV-#### receipt just created by a payment applied in this
-  // session's update — drives the "print it now?" popup. Cleared once
-  // dismissed or printed.
+  // session's update — drives the "print it now?" popup.
   const [justPaidInvoice, setJustPaidInvoice] = useState(null);
 
-  // The always-available "Payment History" list — which customer it's
-  // open for, and their past PINV-#### receipts.
+  // Payment History
   const [historyCustomer, setHistoryCustomer] = useState(null);
   const [paymentHistory, setPaymentHistory] = useState([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
@@ -191,6 +193,7 @@ export default function Customers() {
       emergencyMobile: c.emergencyMobile || '',
       email: c.email || '',
       address: c.address || '',
+      openingBalance: '',
       paymentAmount: '',
     });
   };
@@ -202,6 +205,7 @@ export default function Customers() {
       emergencyMobile,
       email,
       address,
+      openingBalance,
       paymentAmount,
     } = form;
 
@@ -222,12 +226,30 @@ export default function Customers() {
     }
 
     if (
+      mode === 'add' &&
+      openingBalance !== '' &&
+      (
+        !Number.isFinite(Number(openingBalance)) ||
+        Number(openingBalance) < 0
+      )
+    ) {
+      toast.error(
+        'Opening balance must be a valid non-negative amount.'
+      );
+      return false;
+    }
+
+    if (
       mode === 'update' &&
       paymentAmount !== '' &&
-      (!Number.isFinite(Number(paymentAmount)) ||
-        Number(paymentAmount) < 0)
+      (
+        !Number.isFinite(Number(paymentAmount)) ||
+        Number(paymentAmount) < 0
+      )
     ) {
-      toast.error('Payment amount must be a valid non-negative amount.');
+      toast.error(
+        'Payment amount must be a valid non-negative amount.'
+      );
       return false;
     }
 
@@ -240,26 +262,42 @@ export default function Customers() {
     if (!validate()) return;
 
     const payload = {
-      customerName: form.customerName.trim().replace(/\s+/g, ' '),
+      customerName: form.customerName
+        .trim()
+        .replace(/\s+/g, ' '),
       mobileNo: form.mobileNo,
       emergencyMobile: form.emergencyMobile,
       email: form.email,
       address: form.address,
     };
 
-    if (mode === 'update') {
+    if (mode === 'add') {
+      payload.openingBalance =
+        form.openingBalance === ''
+          ? 0
+          : Number(form.openingBalance);
+    } else {
       payload.paymentAmount =
-        form.paymentAmount === '' ? 0 : Number(form.paymentAmount);
+        form.paymentAmount === ''
+          ? 0
+          : Number(form.paymentAmount);
     }
 
     console.log(
-      '[CUSTOMER FRONTEND] Sending update payload:',
+      '[CUSTOMER FRONTEND] Sending payload:',
       payload
     );
 
     try {
       if (mode === 'add') {
-        const data = await api.addCustomer(payload);
+        // IMPORTANT:
+        // Use the existing /customer/create route through api.js.
+        const data = await api.createCustomer(payload);
+
+        console.log(
+          '[CUSTOMER FRONTEND] Create response:',
+          data
+        );
 
         if (!data.success) {
           throw new Error(
@@ -295,29 +333,37 @@ export default function Customers() {
         toast.success('Customer updated successfully!');
 
         // A real payment was applied — offer to print the PINV-####
-        // receipt right away (also always reachable later via the
-        // Payment History button, per this feature's design).
+        // receipt right away.
         if (data.paymentInvoice) {
           setJustPaidInvoice(data.paymentInvoice);
         }
       }
 
       await loadCustomers();
-
       resetForm();
     } catch (err) {
-      console.error('[CUSTOMER FRONTEND] Update failed:', err);
+      console.error(
+        '[CUSTOMER FRONTEND] Save failed:',
+        err
+      );
+
       toast.error(err.message);
     }
   });
 
   const handleDelete = async (c) => {
-    if (!(await confirm(`Delete customer ${c.customerName}?`))) {
+    if (
+      !(await confirm(
+        `Delete customer ${c.customerName}?`
+      ))
+    ) {
       return;
     }
 
     try {
-      const data = await api.deleteCustomer(c.customerName);
+      const data = await api.deleteCustomer(
+        c.customerName
+      );
 
       if (!data.success) {
         throw new Error(
@@ -331,7 +377,10 @@ export default function Customers() {
 
       setShowUndo(true);
 
-      setTimeout(() => setShowUndo(false), 5000);
+      setTimeout(
+        () => setShowUndo(false),
+        5000
+      );
     } catch (err) {
       toast.error(err.message);
     }
@@ -340,19 +389,20 @@ export default function Customers() {
   const handleUndo = async () => {
     if (undoStack.length === 0) return;
 
-    const last = undoStack[undoStack.length - 1];
+    const last =
+      undoStack[undoStack.length - 1];
 
     try {
       const data = await api.undoCustomer(last);
 
       if (!data.success) {
         throw new Error(
-          data.message || 'Failed to restore customer'
+          data.message ||
+            'Failed to restore customer'
         );
       }
 
       setUndoStack((s) => s.slice(0, -1));
-
       setShowUndo(false);
 
       await loadCustomers();
@@ -370,8 +420,11 @@ export default function Customers() {
 
         <div className="p-4 overflow-y-auto flex-1">
           <div className="bg-white rounded-lg shadow p-4 w-full">
+
             <div className="flex flex-wrap text-sm justify-between items-center mb-4 px-4 py-2 gap-2">
+
               <div className="flex gap-2">
+
                 <button
                   onClick={() => setMode('add')}
                   className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700"
@@ -387,15 +440,19 @@ export default function Customers() {
                     Undo
                   </button>
                 )}
+
               </div>
 
               <input
                 type="text"
                 placeholder="Search customers..."
                 value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                onChange={(e) =>
+                  setSearch(e.target.value)
+                }
                 className="border rounded-md px-3 py-2 w-full @min-[640px]:w-64"
               />
+
             </div>
 
             {error && (
@@ -405,12 +462,18 @@ export default function Customers() {
             )}
 
             <div className="bg-white border rounded-lg w-full p-2">
+
               <div className="flex flex-col @min-[1024px]:flex-row @min-[1024px]:h-[560px]">
+
                 <div className="w-full @min-[1024px]:w-2/3 flex flex-col">
+
                   <div className="overflow-x-auto @min-[1024px]:overflow-y-auto px-4 flex-1">
+
                     <table className="w-full min-w-[850px] text-sm">
+
                       <thead>
                         <tr className="border-b bg-gray-100">
+
                           <SortableHeader
                             label="ID"
                             field="customerID"
@@ -455,11 +518,14 @@ export default function Customers() {
                           <th className="p-2 text-left">
                             Actions
                           </th>
+
                         </tr>
                       </thead>
 
                       <tbody>
+
                         {loading ? (
+
                           <tr>
                             <td
                               colSpan={8}
@@ -468,7 +534,9 @@ export default function Customers() {
                               Loading…
                             </td>
                           </tr>
+
                         ) : customers.length === 0 ? (
+
                           <tr>
                             <td
                               colSpan={8}
@@ -477,16 +545,24 @@ export default function Customers() {
                               No customers found
                             </td>
                           </tr>
+
                         ) : (
+
                           customers.map((c) => (
+
                             <tr
-                              key={c.customerID || c.customerName}
+                              key={
+                                c.customerID ||
+                                c.customerName
+                              }
                               className={`border-b hover:bg-gray-50 ${
-                                selectedName === c.customerName
+                                selectedName ===
+                                c.customerName
                                   ? 'bg-blue-50'
                                   : ''
                               }`}
                             >
+
                               <td className="py-2 px-3 font-medium">
                                 {c.customerID || '—'}
                               </td>
@@ -512,15 +588,22 @@ export default function Customers() {
                               </td>
 
                               <td className="py-2 px-3 text-right font-semibold">
+
                                 {(() => {
-                                  const netBalance = roundMoney(
-                                    c.accountBalance || 0
-                                  );
+
+                                  const netBalance =
+                                    roundMoney(
+                                      c.accountBalance ||
+                                        0
+                                    );
 
                                   if (netBalance > 0) {
                                     return (
                                       <span className="text-red-700">
-                                        -{formatMoney(netBalance)}
+                                        -
+                                        {formatMoney(
+                                          netBalance
+                                        )}
                                       </span>
                                     );
                                   }
@@ -528,7 +611,10 @@ export default function Customers() {
                                   if (netBalance < 0) {
                                     return (
                                       <span className="text-green-700">
-                                        +{formatMoney(-netBalance)}
+                                        +
+                                        {formatMoney(
+                                          -netBalance
+                                        )}
                                       </span>
                                     );
                                   }
@@ -538,10 +624,13 @@ export default function Customers() {
                                       {formatMoney(0)}
                                     </span>
                                   );
+
                                 })()}
+
                               </td>
 
                               <td className="py-2 px-3 flex gap-2">
+
                                 <button
                                   onClick={() =>
                                     handleSelectForUpdate(c)
@@ -554,7 +643,9 @@ export default function Customers() {
 
                                 <button
                                   onClick={() =>
-                                    openPaymentHistory(c.customerName)
+                                    openPaymentHistory(
+                                      c.customerName
+                                    )
                                   }
                                   className="text-purple-600 hover:text-purple-800"
                                   title="Payment History"
@@ -571,12 +662,19 @@ export default function Customers() {
                                 >
                                   🗑️
                                 </button>
+
                               </td>
+
                             </tr>
+
                           ))
+
                         )}
+
                       </tbody>
+
                     </table>
+
                   </div>
 
                   <Pagination
@@ -585,9 +683,11 @@ export default function Customers() {
                     total={total}
                     onPageChange={setPage}
                   />
+
                 </div>
 
                 <div className="w-full @min-[1024px]:w-1/3 px-4 @min-[640px]:px-10 py-6 border-t-4 @min-[1024px]:border-t-0 @min-[1024px]:border-l-4 border-gray-300 @min-[1024px]:overflow-y-auto">
+
                   <h2
                     className={`text-2xl flex justify-center font-bold mb-2 ${
                       mode === 'add'
@@ -604,6 +704,7 @@ export default function Customers() {
                     onSubmit={handleSubmit}
                     className="space-y-2 w-full text-sm"
                   >
+
                     <div>
                       <label className="block mb-1 font-medium">
                         Name
@@ -616,7 +717,8 @@ export default function Customers() {
                         onChange={(e) =>
                           setForm({
                             ...form,
-                            customerName: e.target.value,
+                            customerName:
+                              e.target.value,
                           })
                         }
                         placeholder="Enter customer name"
@@ -635,7 +737,8 @@ export default function Customers() {
                         onChange={(e) =>
                           setForm({
                             ...form,
-                            mobileNo: e.target.value,
+                            mobileNo:
+                              e.target.value,
                           })
                         }
                         placeholder="Enter mobile number"
@@ -654,7 +757,8 @@ export default function Customers() {
                         onChange={(e) =>
                           setForm({
                             ...form,
-                            emergencyMobile: e.target.value,
+                            emergencyMobile:
+                              e.target.value,
                           })
                         }
                         placeholder="Enter second number"
@@ -673,7 +777,8 @@ export default function Customers() {
                         onChange={(e) =>
                           setForm({
                             ...form,
-                            email: e.target.value,
+                            email:
+                              e.target.value,
                           })
                         }
                         placeholder="Enter email"
@@ -692,7 +797,8 @@ export default function Customers() {
                         onChange={(e) =>
                           setForm({
                             ...form,
-                            address: e.target.value,
+                            address:
+                              e.target.value,
                           })
                         }
                         placeholder="Enter address"
@@ -700,6 +806,40 @@ export default function Customers() {
                       />
                     </div>
 
+                    {/* Opening Balance is ONLY for creating a new customer */}
+                    {mode === 'add' && (
+                      <div>
+                        <label className="block mb-1 font-medium">
+                          Opening Balance
+                        </label>
+
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={form.openingBalance}
+                          onChange={(e) => {
+                            const value =
+                              e.target.value;
+
+                            if (
+                              value === '' ||
+                              /^\d*\.?\d*$/.test(value)
+                            ) {
+                              setForm({
+                                ...form,
+                                openingBalance:
+                                  value,
+                              });
+                            }
+                          }}
+                          placeholder="Enter opening balance"
+                          className="border rounded px-3 py-1.5 w-full"
+                        />
+                      </div>
+                    )}
+
+                    {/* Payment is ONLY for updating an existing customer */}
                     {mode === 'update' && (
                       <div>
                         <label className="block mb-1 font-medium">
@@ -714,7 +854,8 @@ export default function Customers() {
                           onChange={(e) =>
                             setForm({
                               ...form,
-                              paymentAmount: e.target.value,
+                              paymentAmount:
+                                e.target.value,
                             })
                           }
                           placeholder="Enter payment amount"
@@ -724,6 +865,7 @@ export default function Customers() {
                     )}
 
                     <div className="flex gap-2 pt-2">
+
                       <button
                         type="submit"
                         disabled={savingCustomer}
@@ -749,46 +891,73 @@ export default function Customers() {
                           Cancel
                         </button>
                       )}
+
                     </div>
+
                   </form>
+
                 </div>
+
               </div>
+
             </div>
+
           </div>
         </div>
 
         {justPaidInvoice && (
           <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+
             <div className="bg-white rounded-lg shadow-lg w-full max-w-sm p-5">
+
               <h3 className="text-lg font-bold text-green-700 mb-1">
                 Payment Recorded
               </h3>
 
               <p className="text-sm text-gray-600 mb-3">
-                {justPaidInvoice.invoiceNumber} — {justPaidInvoice.customerName}
+                {justPaidInvoice.invoiceNumber} —{' '}
+                {justPaidInvoice.customerName}
               </p>
 
               <div className="text-sm space-y-1 mb-4">
+
                 <div className="flex justify-between">
                   <span>Old Balance</span>
-                  <span>{formatMoney(justPaidInvoice.oldBalance)}</span>
+                  <span>
+                    {formatMoney(
+                      justPaidInvoice.oldBalance
+                    )}
+                  </span>
                 </div>
 
                 <div className="flex justify-between">
                   <span>Paid Amount</span>
-                  <span>{formatMoney(justPaidInvoice.paidAmount)}</span>
+                  <span>
+                    {formatMoney(
+                      justPaidInvoice.paidAmount
+                    )}
+                  </span>
                 </div>
 
                 <div className="flex justify-between font-semibold">
                   <span>Balance Left</span>
-                  <span>{formatMoney(justPaidInvoice.newBalance)}</span>
+                  <span>
+                    {formatMoney(
+                      justPaidInvoice.newBalance
+                    )}
+                  </span>
                 </div>
+
               </div>
 
               <div className="flex gap-2">
+
                 <button
                   onClick={() => {
-                    printPaymentInvoice(justPaidInvoice);
+                    printPaymentInvoice(
+                      justPaidInvoice
+                    );
+
                     setJustPaidInvoice(null);
                   }}
                   className="flex-1 px-4 py-1.5 bg-green-600 text-white rounded hover:bg-green-700"
@@ -797,22 +966,31 @@ export default function Customers() {
                 </button>
 
                 <button
-                  onClick={() => setJustPaidInvoice(null)}
+                  onClick={() =>
+                    setJustPaidInvoice(null)
+                  }
                   className="px-4 py-1.5 bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
                 >
                   Close
                 </button>
+
               </div>
+
             </div>
+
           </div>
         )}
 
         {historyCustomer && (
           <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+
             <div className="bg-white rounded-lg shadow-lg w-full max-w-md p-5 max-h-[80vh] flex flex-col">
+
               <div className="flex justify-between items-center mb-3">
+
                 <h3 className="text-lg font-bold">
-                  Payment History — {historyCustomer}
+                  Payment History —{' '}
+                  {historyCustomer}
                 </h3>
 
                 <button
@@ -822,51 +1000,79 @@ export default function Customers() {
                 >
                   ✕
                 </button>
+
               </div>
 
               <div className="overflow-y-auto flex-1 space-y-2">
+
                 {loadingHistory ? (
+
                   <p className="text-center text-gray-400 py-6">
                     Loading…
                   </p>
+
                 ) : paymentHistory.length === 0 ? (
+
                   <p className="text-center text-gray-400 py-6">
                     No payments recorded for this customer yet.
                   </p>
+
                 ) : (
+
                   paymentHistory.map((inv) => (
+
                     <div
                       key={inv.invoiceNumber}
                       className="border rounded-lg p-3 text-sm flex justify-between items-center gap-2"
                     >
+
                       <div>
+
                         <div className="font-semibold">
                           {inv.invoiceNumber}
                         </div>
 
                         <div className="text-gray-500">
-                          {new Date(inv.createdAt).toLocaleString()}
+                          {new Date(
+                            inv.createdAt
+                          ).toLocaleString()}
                         </div>
 
                         <div className="mt-1">
-                          Paid {formatMoney(inv.paidAmount)} · Balance
-                          left {formatMoney(inv.newBalance)}
+                          Paid{' '}
+                          {formatMoney(
+                            inv.paidAmount
+                          )}{' '}
+                          · Balance left{' '}
+                          {formatMoney(
+                            inv.newBalance
+                          )}
                         </div>
+
                       </div>
 
                       <button
-                        onClick={() => printPaymentInvoice(inv)}
+                        onClick={() =>
+                          printPaymentInvoice(inv)
+                        }
                         className="shrink-0 px-3 py-1.5 bg-purple-600 text-white rounded hover:bg-purple-700"
                       >
                         Print
                       </button>
+
                     </div>
+
                   ))
+
                 )}
+
               </div>
+
             </div>
+
           </div>
         )}
+
       </main>
     </div>
   );

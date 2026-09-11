@@ -63,91 +63,130 @@ router.get('/api/customers', requireAuth, asyncHandler(async (req, res) => {
   res.json({ success: true, customers, total, page, limit });
 }));
 
-router.post('/customer/create', requireAuth, requireAdmin, asyncHandler(async (req, res) => {
- let {
-    customerName,
-    mobileNo,
-    emergencyMobile,
-    email,
-    address,
-  } = req.body;
+router.post(
+  '/customer/create',
+  requireAuth,
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    let {
+      customerName,
+      mobileNo,
+      emergencyMobile,
+      email,
+      address,
+      openingBalance,
+    } = req.body;
 
-  if (!customerName || customerName.trim() === '') {
-    return res.status(400).json({
-      success: false,
-      message: 'Customer name is required',
-    });
-  }
-
-  customerName = customerName.trim().replace(/\s+/g, ' ');
-  mobileNo = mobileNo ? mobileNo.trim() : '';
-  emergencyMobile = emergencyMobile ? emergencyMobile.trim() : '';
-  email = email ? email.trim() : '';
-  address = address ? address.trim() : '';
-
-  if (!isValidEmail(email)) {
-    return res.status(400).json({
-      success: false,
-      message: "That email address doesn't look right.",
-    });
-  }
-
-  if (!isValidPhone(mobileNo) || !isValidPhone(emergencyMobile)) {
-    return res.status(400).json({
-      success: false,
-      message: "That phone number doesn't look right.",
-    });
-  }
-
-  const existingCustomer = await Customer.findOne({ customerName });
-
-  if (existingCustomer) {
-    return res.status(400).json({
-      success: false,
-      message: 'Customer already exists',
-    });
-  }
-
-  // Generate the next customer ID on the server.
-  const lastCustomer = await Customer.findOne({})
-    .sort({ customerID: -1 })
-    .select('customerID')
-    .lean();
-
-  let nextNumber = 1;
-
-  if (lastCustomer?.customerID) {
-    const lastNumber = parseInt(
-      lastCustomer.customerID.replace('#', ''),
-      10
-    );
-
-    if (Number.isFinite(lastNumber)) {
-      nextNumber = lastNumber + 1;
+    // -----------------------------
+    // Customer name
+    // -----------------------------
+    if (!customerName || customerName.trim() === '') {
+      return res.status(400).json({
+        success: false,
+        message: 'Customer name is required',
+      });
     }
-  }
 
-  const customerID = `#${String(nextNumber).padStart(4, '0')}`;
+    // -----------------------------
+    // Normalize input
+    // -----------------------------
+    customerName = customerName.trim().replace(/\s+/g, ' ');
+    mobileNo = mobileNo ? mobileNo.trim() : '';
+    emergencyMobile = emergencyMobile ? emergencyMobile.trim() : '';
+    email = email ? email.trim() : '';
+    address = address ? address.trim() : '';
 
-  const newCustomer = new Customer({
-    customerID,
-    customerName,
-    mobileNo,
-    emergencyMobile,
-    email,
-    address,
-    orders: [],
-    accountBalance: 0,
-  });
+    // -----------------------------
+    // OLD validation
+    // Keep this exactly as before
+    // -----------------------------
+    if (!isValidEmail(email)) {
+      return res.status(400).json({
+        success: false,
+        message: "That email address doesn't look right.",
+      });
+    }
 
-  await newCustomer.save();
+    if (!isValidPhone(mobileNo) || !isValidPhone(emergencyMobile)) {
+      return res.status(400).json({
+        success: false,
+        message: "That phone number doesn't look right.",
+      });
+    }
 
-  res.status(201).json({
-    success: true,
-    message: 'Customer added successfully',
-    customer: newCustomer,
-  });
-}));
+    // -----------------------------
+    // Opening balance
+    // -----------------------------
+    const accountBalance =
+      openingBalance === undefined || openingBalance === ''
+        ? 0
+        : Number(openingBalance);
+
+    if (!Number.isFinite(accountBalance) || accountBalance < 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Opening balance must be a valid non-negative amount.',
+      });
+    }
+
+    // -----------------------------
+    // Check duplicate customer
+    // -----------------------------
+    const existingCustomer = await Customer.findOne({
+      customerName,
+    });
+
+    if (existingCustomer) {
+      return res.status(400).json({
+        success: false,
+        message: 'Customer already exists',
+      });
+    }
+
+    // -----------------------------
+    // Generate Customer ID
+    // -----------------------------
+    const customerID = await generateCustomerID();
+
+    // The Customers schema allows only:
+    // #0001 through #9999
+    //
+    // If generateCustomerID() returns #10000,
+    // do NOT allow Mongoose to fail with a generic
+    // ValidationError.
+    if (!/^#\d{4}$/.test(customerID)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Customer ID limit reached. No more customer IDs are available.',
+      });
+    }
+
+    // -----------------------------
+    // Create customer
+    // -----------------------------
+    const newCustomer = new Customer({
+      customerID,
+      customerName,
+      mobileNo,
+      emergencyMobile,
+      email,
+      address,
+      orders: [],
+      accountBalance,
+    });
+
+    await newCustomer.save();
+
+    // -----------------------------
+    // Response
+    // -----------------------------
+    res.status(201).json({
+      success: true,
+      message: 'Customer added successfully',
+      customer: newCustomer,
+    });
+  })
+);
 
 
 router.post('/customer/updateCustomer', requireAuth, asyncHandler(async (req, res) => {
@@ -533,4 +572,3 @@ router.get('/customer/paymentInvoices', requireAuth, asyncHandler(async (req, re
 }));
 
 module.exports = router;
-

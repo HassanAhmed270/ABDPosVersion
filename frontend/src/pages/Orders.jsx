@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import Sidebar from '../components/Sidebar';
 import Topbar from '../components/Topbar';
@@ -26,47 +26,49 @@ const WALKIN_CUSTOMER = 'Walk-in / Unknown';
 export default function Orders() {
   const { isAdmin } = useAuth();
   const confirm = useConfirm();
-
   const [orders, setOrders] = useState([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [allProducts, setAllProducts] = useState([]);
-
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebouncedValue(search, 300);
   const [sortBy, setSortBy] = useState('orderDate');
   const [sortDir, setSortDir] = useState('desc');
   const [page, setPage] = useState(1);
-
   const [expandedID, setExpandedID] = useState(null);
   const [detail, setDetail] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
-
   const [editForm, setEditForm] = useState({
     productID: '',
     removeQty: '',
     reason: '',
   });
-
   const [addForm, setAddForm] = useState({
     productID: '',
     quantity: '',
+    unitPrice: '',
     reason: '',
   });
-
   const [convertForm, setConvertForm] = useState({
     customerName: '',
     mobileNo: '',
     email: '',
     address: '',
   });
-
   const [refundReason, setRefundReason] = useState('');
-
-  // Prevent double-clicks from applying the same edit, add, convert,
-  // or refund twice — each mutates the order and/or a customer
-  // balance (see lib/useSubmitGuard.js).
+  const [editProductSearch, setEditProductSearch] = useState('');
+  const [addProductSearch, setAddProductSearch] = useState('');
+  const [showEditProductDropdown, setShowEditProductDropdown] = useState(false);
+  const [showAddProductDropdown, setShowAddProductDropdown] = useState(false);
+  const [highlightedEditProductIndex, setHighlightedEditProductIndex] = useState(0);
+  const [highlightedAddProductIndex, setHighlightedAddProductIndex] = useState(0);
+  const editProductDropdownRef = useRef(null);
+  const addProductDropdownRef = useRef(null);
+  const editProductSearchRef = useRef(null);
+  const addProductSearchRef = useRef(null);
+  const editProductOptionRefs = useRef([]);
+  const addProductOptionRefs = useRef([]);
   const { submitting: editingItem, guard: guardEditSubmit } = useSubmitGuard();
   const { submitting: addingItem, guard: guardAddSubmit } = useSubmitGuard();
   const { submitting: convertingOrder, guard: guardConvertSubmit } = useSubmitGuard();
@@ -74,7 +76,6 @@ export default function Orders() {
 
   const loadOrders = async () => {
     setLoading(true);
-
     try {
       const data = await api.getOrders({
         search: debouncedSearch,
@@ -83,7 +84,6 @@ export default function Orders() {
         page,
         limit: PAGE_SIZE,
       });
-
       setOrders(data.orders || []);
       setTotal(data.total || 0);
       setError('');
@@ -115,6 +115,118 @@ export default function Orders() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debouncedSearch, sortBy, sortDir]);
 
+  const filteredEditProducts = useMemo(() => {
+    if (!detail?.order?.products) return [];
+    const q = editProductSearch.trim().toLowerCase();
+    const products = detail.order.products;
+    if (!q) return products;
+    return products
+      .filter((p) => {
+        const productName = getProductName(p.productID).toLowerCase();
+        const productID = p.productID.toLowerCase();
+        return productName.includes(q) || productID.includes(q);
+      })
+      .sort((a, b) => {
+        const aName = getProductName(a.productID).toLowerCase();
+        const bName = getProductName(b.productID).toLowerCase();
+        const aID = a.productID.toLowerCase();
+        const bID = b.productID.toLowerCase();
+        const aStarts = aName.startsWith(q) || aID.startsWith(q);
+        const bStarts = bName.startsWith(q) || bID.startsWith(q);
+        if (aStarts !== bStarts) {
+          return aStarts ? -1 : 1;
+        }
+        return aName.localeCompare(bName);
+      });
+  }, [detail, editProductSearch]);
+
+  const filteredAddProducts = useMemo(() => {
+    if (!detail?.order?.products) return [];
+    const products = allProducts.filter(
+      (p) =>
+        !detail.order.products.some(
+          (line) => line.productID === p.productID
+        )
+    );
+    const q = addProductSearch.trim().toLowerCase();
+    if (!q) return products;
+    return products
+      .filter((p) => {
+        const productName = (p.productName || '').toLowerCase();
+        const productID = p.productID.toLowerCase();
+        return productName.includes(q) || productID.includes(q);
+      })
+      .sort((a, b) => {
+        const aName = (a.productName || '').toLowerCase();
+        const bName = (b.productName || '').toLowerCase();
+        const aID = a.productID.toLowerCase();
+        const bID = b.productID.toLowerCase();
+        const aStarts = aName.startsWith(q) || aID.startsWith(q);
+        const bStarts = bName.startsWith(q) || bID.startsWith(q);
+        if (aStarts !== bStarts) {
+          return aStarts ? -1 : 1;
+        }
+        return aName.localeCompare(bName);
+      });
+  }, [allProducts, detail, addProductSearch]);
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (
+        editProductDropdownRef.current &&
+        !editProductDropdownRef.current.contains(event.target)
+      ) {
+        setShowEditProductDropdown(false);
+        setEditProductSearch('');
+        setHighlightedEditProductIndex(0);
+      }
+      if (
+        addProductDropdownRef.current &&
+        !addProductDropdownRef.current.contains(event.target)
+      ) {
+        setShowAddProductDropdown(false);
+        setAddProductSearch('');
+        setHighlightedAddProductIndex(0);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
+
+  useEffect(() => {
+    setHighlightedEditProductIndex(0);
+  }, [editProductSearch]);
+
+  useEffect(() => {
+    setHighlightedAddProductIndex(0);
+  }, [addProductSearch]);
+
+  useEffect(() => {
+    editProductOptionRefs.current[highlightedEditProductIndex]?.scrollIntoView({
+      block: 'nearest',
+    });
+  }, [highlightedEditProductIndex]);
+
+  useEffect(() => {
+    addProductOptionRefs.current[highlightedAddProductIndex]?.scrollIntoView({
+      block: 'nearest',
+    });
+  }, [highlightedAddProductIndex]);
+
+  useEffect(() => {
+    if (showEditProductDropdown) {
+      requestAnimationFrame(() => editProductSearchRef.current?.focus());
+    }
+  }, [showEditProductDropdown]);
+
+  useEffect(() => {
+    if (showAddProductDropdown) {
+      requestAnimationFrame(() => addProductSearchRef.current?.focus());
+    }
+  }, [showAddProductDropdown]);
+
   const handleSort = (field) => {
     if (sortBy === field) {
       setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
@@ -130,32 +242,33 @@ export default function Orders() {
       setDetail(null);
       return;
     }
-
     setExpandedID(orderID);
     setDetail(null);
     setDetailLoading(true);
-
     setEditForm({
       productID: '',
       removeQty: '',
       reason: '',
     });
-
     setAddForm({
       productID: '',
       quantity: '',
+      unitPrice: '',
       reason: '',
     });
-
     setConvertForm({
       customerName: '',
       mobileNo: '',
       email: '',
       address: '',
     });
-
     setRefundReason('');
-
+    setEditProductSearch('');
+    setAddProductSearch('');
+    setShowEditProductDropdown(false);
+    setShowAddProductDropdown(false);
+    setHighlightedEditProductIndex(0);
+    setHighlightedAddProductIndex(0);
     try {
       const data = await api.getOrder(orderID);
       setDetail(data);
@@ -182,54 +295,122 @@ export default function Orders() {
     return product?.productName || productID;
   };
 
+  const selectEditProduct = (productID) => {
+    setEditForm({
+      ...editForm,
+      productID,
+    });
+    setEditProductSearch('');
+    setHighlightedEditProductIndex(0);
+    setShowEditProductDropdown(false);
+  };
+
+  const selectAddProduct = (productID) => {
+    const product = allProducts.find((p) => p.productID === productID);
+    const retailPrice =
+      product?.sellingPrice ??
+      product?.retailPrice ??
+      '';
+    setAddForm({
+      ...addForm,
+      productID,
+      unitPrice: retailPrice,
+    });
+    setAddProductSearch('');
+    setHighlightedAddProductIndex(0);
+    setShowAddProductDropdown(false);
+  };
+
+  const handleEditProductSearchKeyDown = (e) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setHighlightedEditProductIndex((prev) =>
+        filteredEditProducts.length
+          ? Math.min(prev + 1, filteredEditProducts.length - 1)
+          : 0
+      );
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setHighlightedEditProductIndex((prev) =>
+        Math.max(prev - 1, 0)
+      );
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      const product = filteredEditProducts[highlightedEditProductIndex];
+      if (product) {
+        selectEditProduct(product.productID);
+      }
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      setShowEditProductDropdown(false);
+      setEditProductSearch('');
+      setHighlightedEditProductIndex(0);
+    }
+  };
+
+  const handleAddProductSearchKeyDown = (e) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setHighlightedAddProductIndex((prev) =>
+        filteredAddProducts.length
+          ? Math.min(prev + 1, filteredAddProducts.length - 1)
+          : 0
+      );
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setHighlightedAddProductIndex((prev) =>
+        Math.max(prev - 1, 0)
+      );
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      const product = filteredAddProducts[highlightedAddProductIndex];
+      if (product) {
+        selectAddProduct(product.productID);
+      }
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      setShowAddProductDropdown(false);
+      setAddProductSearch('');
+      setHighlightedAddProductIndex(0);
+    }
+  };
+
   const handleEditSubmit = guardEditSubmit(async (e) => {
     e.preventDefault();
-
     if (!editForm.productID) {
       return toast.error('Select a line item to edit.');
     }
-
     const removeQty = parseInt(editForm.removeQty);
-
     if (isNaN(removeQty) || removeQty <= 0) {
       return toast.error('Enter a quantity greater than 0 to remove.');
     }
-
     const product = detail.order.products.find(
       (p) => p.productID === editForm.productID
     );
-
     if (!product) {
       return toast.error('Selected item was not found.');
     }
-
     if (removeQty > product.quantity) {
       return toast.error(
         `You can remove a maximum of ${product.quantity}.`
       );
     }
-
     const newQty = product.quantity - removeQty;
-
     if (!editForm.reason.trim()) {
       return toast.error('A reason is required.');
     }
-
     try {
       await api.editOrderItem(expandedID, {
         productID: editForm.productID,
         newQty,
         reason: editForm.reason.trim(),
       });
-
       toast.success('Order updated.');
-
       setEditForm({
         productID: '',
         removeQty: '',
         reason: '',
       });
-
       await refreshDetail(expandedID);
     } catch (err) {
       toast.error('Edit failed: ' + err.message);
@@ -238,21 +419,20 @@ export default function Orders() {
 
   const handleAddSubmit = guardAddSubmit(async (e) => {
     e.preventDefault();
-
     if (!addForm.productID) {
       return toast.error('Select a product to add.');
     }
-
     const quantity = parseInt(addForm.quantity);
-
+    const unitPrice = Number(addForm.unitPrice);
     if (!Number.isInteger(quantity) || quantity <= 0) {
       return toast.error('Enter a valid quantity.');
     }
-
+    if (!Number.isFinite(unitPrice) || unitPrice <= 0) {
+      return toast.error('Enter a valid unit price.');
+    }
     if (!addForm.reason.trim()) {
       return toast.error('A reason is required.');
     }
-
     if (
       detail.order.products.some(
         (p) => p.productID === addForm.productID
@@ -262,23 +442,21 @@ export default function Orders() {
         'This order already has a line for that product — use "Edit a line item" instead.'
       );
     }
-
     try {
       await api.editOrderItem(expandedID, {
         action: 'add',
         productID: addForm.productID,
         quantity,
+        unitPrice,
         reason: addForm.reason.trim(),
       });
-
       toast.success('Item added to order.');
-
       setAddForm({
         productID: '',
         quantity: '',
+        unitPrice: '',
         reason: '',
       });
-
       await refreshDetail(expandedID);
     } catch (err) {
       toast.error('Failed to add item: ' + err.message);
@@ -287,11 +465,9 @@ export default function Orders() {
 
   const handleConvertSubmit = guardConvertSubmit(async (e) => {
     e.preventDefault();
-
     if (!convertForm.customerName.trim()) {
       return toast.error('Customer name is required.');
     }
-
     try {
       await api.createCustomer({
         customerName: convertForm.customerName.trim(),
@@ -299,23 +475,19 @@ export default function Orders() {
         email: convertForm.email.trim(),
         address: convertForm.address.trim(),
       });
-
       await api.convertWalkInOrder(
         expandedID,
         convertForm.customerName.trim()
       );
-
       toast.success(
         `Order attached to ${convertForm.customerName.trim()}.`
       );
-
       setConvertForm({
         customerName: '',
         mobileNo: '',
         email: '',
         address: '',
       });
-
       await refreshDetail(expandedID);
     } catch (err) {
       toast.error('Failed to convert order: ' + err.message);
@@ -324,20 +496,16 @@ export default function Orders() {
 
   const handleRefundSubmit = guardRefundSubmit(async (e) => {
     e.preventDefault();
-
     const items = detail.order.products.map((p) => ({
       productID: p.productID,
       quantity: p.quantity,
     }));
-
     if (items.length === 0) {
       return toast.error('This order has no items left to refund.');
     }
-
     if (!refundReason.trim()) {
       return toast.error('A reason is required.');
     }
-
     if (
       !(await confirm(
         `Refund the full order ${expandedID} for cash back? This marks the whole order as refunded.`
@@ -345,27 +513,22 @@ export default function Orders() {
     ) {
       return;
     }
-
     try {
       const data = await api.refundOrder(expandedID, {
         items,
         reason: refundReason.trim(),
         settlement: 'cash',
       });
-
       if (!data?.success || !data?.refund) {
         throw new Error(
           data?.message ||
-            'Refund completed but no refund details were returned.'
+          'Refund completed but no refund details were returned.'
         );
       }
-
       toast.success(
         `Cash back processed: ${formatMoney(data.refund.refundAmount)}`
       );
-
       setRefundReason('');
-
       await refreshDetail(expandedID);
     } catch (err) {
       toast.error('Refund failed: ' + err.message);
@@ -374,26 +537,17 @@ export default function Orders() {
 
   const handlePrintRevised = () => {
     if (!detail) return;
-
     const { order, refunds } = detail;
     const now = new Date();
-
     const itemRows = order.products
       .map((p) => {
         const quantity = Number(p.quantity || 0);
         const retailPrice = Number(p.retailPrice || 0);
         const unitPrice = Number(p.unitPrice || 0);
         const total = Number(p.amount || 0);
-        // Retail is genuinely optional on a product (see Products.jsx's
-        // "—" treatment for an unset price) — an order line item can
-        // likewise have no real retail price on file. 0/null/undefined
-        // all mean "not provided" here, matching that same convention,
-        // so the reprinted receipt leaves the cell blank instead of
-        // printing a misleading "0.00".
         const retailCell = retailPrice
           ? `<td>${formatMoneyShort(retailPrice)}</td>`
           : '<td></td>';
-
         return `
           <tr>
             <td class="item-name">${getProductName(p.productID)}</td>
@@ -405,7 +559,6 @@ export default function Orders() {
         `;
       })
       .join('');
-
     const editRows = (order.editHistory || [])
       .map((e) => {
         const settlementLabel =
@@ -414,7 +567,6 @@ export default function Orders() {
             : e.settlement === 'cash'
               ? `Cash Back: ${formatMoney(e.creditAmount || 0)}`
               : '—';
-
         return `
           <tr>
             <td>${e.productID}</td>
@@ -428,7 +580,6 @@ export default function Orders() {
         `;
       })
       .join('');
-
     const refundRows = (refunds || [])
       .map(
         (r) => `
@@ -442,37 +593,28 @@ export default function Orders() {
         `
       )
       .join('');
-
     printReceipt(`
       <div class="receipt">
         <div class="shop-name">${SHOP_NAME}</div>
         <div class="shop-line">${SHOP_ADDRESS}</div>
         <div class="shop-line">Phone: ${SHOP_PHONE}</div>
-
         <hr class="sep-solid" />
-
         <div class="meta-row">
           <span>
             Revised Receipt${order.status === 'refunded' ? ' (REFUNDED)' : ''}
           </span>
           <span>${now.toLocaleDateString()}</span>
         </div>
-
         <div class="meta-row">
           <span>Order: ${order.orderID}</span>
           <span>${now.toLocaleTimeString()}</span>
         </div>
-
         <div>Customer Name: ${order.customerName}</div>
-
-        ${
-          order.offlineOrigin
-            ? '<div class="offline-banner">OFFLINE SALE — SYNCED</div>'
-            : ''
-        }
-
+        ${order.offlineOrigin
+        ? '<div class="offline-banner">OFFLINE SALE — SYNCED</div>'
+        : ''
+      }
         <hr class="sep" />
-
         <table class="items">
           <colgroup>
             <col class="col-item" />
@@ -481,7 +623,6 @@ export default function Orders() {
             <col class="col-qty" />
             <col class="col-total" />
           </colgroup>
-
           <thead>
             <tr>
               <th>Item</th>
@@ -491,48 +632,37 @@ export default function Orders() {
               <th>Total</th>
             </tr>
           </thead>
-
           <tbody>
             ${itemRows}
           </tbody>
         </table>
-
         <hr class="sep" />
-
         <div class="totals-row grand">
           <span>Grand Total</span>
           <span>${formatMoney(order.totalAmount)}</span>
         </div>
-
-        ${
-          order.creditApplied > 0
-            ? `
+        ${order.creditApplied > 0
+        ? `
               <div class="totals-row">
                 <span>Store Credit Applied</span>
                 <span>${formatMoney(order.creditApplied)}</span>
               </div>
             `
-            : ''
-        }
-
+        : ''
+      }
         <div class="totals-row">
           <span>Paid</span>
           <span>${formatMoney(order.amountPaid)}</span>
         </div>
-
         <div class="totals-row">
           <span>Balance Due</span>
           <span>${formatMoney(order.balanceDue)}</span>
         </div>
-
         <hr class="sep-solid" />
-
         <div class="footer">THANK YOU! VISIT AGAIN</div>
       </div>
-
-      ${
-        editRows
-          ? `
+      ${editRows
+        ? `
             <div class="edit-history">
               <h3>Edit History</h3>
               <table>
@@ -551,12 +681,10 @@ export default function Orders() {
               </table>
             </div>
           `
-          : ''
+        : ''
       }
-
-      ${
-        refundRows
-          ? `
+      ${refundRows
+        ? `
             <div class="edit-history">
               <h3>Refunds</h3>
               <table>
@@ -573,7 +701,7 @@ export default function Orders() {
               </table>
             </div>
           `
-          : ''
+        : ''
       }
     `);
   };
@@ -581,10 +709,8 @@ export default function Orders() {
   return (
     <div className="flex h-screen">
       <Sidebar />
-
       <main className="flex-1 flex flex-col overflow-hidden">
         <Topbar title="Orders" />
-
         <div className="p-4 @min-[768px]:p-6 overflow-y-auto flex-1">
           <input
             type="text"
@@ -593,18 +719,15 @@ export default function Orders() {
             onChange={(e) => setSearch(e.target.value)}
             className="border rounded px-3 py-2 w-full @min-[640px]:w-72 mb-4"
           />
-
           {error && (
             <p className="text-red-600 text-sm mb-4">{error}</p>
           )}
-
           {!isAdmin && (
             <p className="text-xs text-gray-500 mb-4">
               You're viewing orders read-only — editing and refunds are
               admin-only.
             </p>
           )}
-
           <div className="bg-white border rounded-lg w-full overflow-x-auto">
             <table className="w-full min-w-[720px] text-sm">
               <thead>
@@ -616,7 +739,6 @@ export default function Orders() {
                     sortDir={sortDir}
                     onSort={handleSort}
                   />
-
                   <SortableHeader
                     label="Customer"
                     field="customerName"
@@ -624,7 +746,6 @@ export default function Orders() {
                     sortDir={sortDir}
                     onSort={handleSort}
                   />
-
                   <SortableHeader
                     label="Total"
                     field="totalAmount"
@@ -632,7 +753,6 @@ export default function Orders() {
                     sortDir={sortDir}
                     onSort={handleSort}
                   />
-
                   <SortableHeader
                     label="Date"
                     field="orderDate"
@@ -640,7 +760,6 @@ export default function Orders() {
                     sortDir={sortDir}
                     onSort={handleSort}
                   />
-
                   <SortableHeader
                     label="Avg Payment"
                     field="avgPayment"
@@ -648,11 +767,9 @@ export default function Orders() {
                     sortDir={sortDir}
                     onSort={handleSort}
                   />
-
                   <th className="py-3 px-2 text-left">Status</th>
                 </tr>
               </thead>
-
               <tbody>
                 {loading ? (
                   <tr>
@@ -677,41 +794,33 @@ export default function Orders() {
                     <Fragment key={o.orderID}>
                       <tr
                         onClick={() => toggleRow(o.orderID)}
-                        className={`border-b hover:bg-gray-50 cursor-pointer ${
-                          expandedID === o.orderID ? 'bg-blue-50' : ''
-                        }`}
+                        className={`border-b hover:bg-gray-50 cursor-pointer ${expandedID === o.orderID ? 'bg-blue-50' : ''
+                          }`}
                       >
                         <td className="py-2 px-3">{o.orderID}</td>
-
                         <td className="py-2 px-3">
                           {o.customerName}
                         </td>
-
                         <td className="py-2 px-3">
                           {formatMoney(o.totalAmount)}
                         </td>
-
                         <td className="py-2 px-3">
                           {new Date(
                             o.orderDate
                           ).toLocaleDateString()}
                         </td>
-
                         <td className="py-2 px-3">
                           {formatMoney(o.avgPayment)}
                         </td>
-
                         <td className="py-2 px-3">
                           <span
-                            className={`px-2 py-0.5 rounded text-xs font-medium ${
-                              statusBadge[o.displayStatus] || ''
-                            }`}
+                            className={`px-2 py-0.5 rounded text-xs font-medium ${statusBadge[o.displayStatus] || ''
+                              }`}
                           >
                             {o.displayStatus}
                           </span>
                         </td>
                       </tr>
-
                       {expandedID === o.orderID && (
                         <tr className="bg-gray-50">
                           <td colSpan={6} className="p-4">
@@ -730,7 +839,6 @@ export default function Orders() {
                                     <h3 className="font-bold text-brand">
                                       Details
                                     </h3>
-
                                     <button
                                       onClick={handlePrintRevised}
                                       className="text-xs text-blue-600 hover:underline"
@@ -741,30 +849,25 @@ export default function Orders() {
                                         : ''}
                                     </button>
                                   </div>
-
                                   <div>
                                     Cashier: {detail.order.cashier}
                                   </div>
-
                                   <div>
                                     Date:{' '}
                                     {new Date(
                                       detail.order.orderDate
                                     ).toLocaleString()}
                                   </div>
-
                                   {detail.order.offlineOrigin && (
                                     <div className="bg-amber-100 text-amber-800 rounded px-3 py-2 text-xs font-medium">
                                       Offline sale — synced successfully
                                     </div>
                                   )}
-
                                   {detail.order.status === 'refunded' && (
                                     <div className="bg-gray-200 text-gray-700 rounded px-3 py-1 text-xs font-medium">
                                       This order has been refunded.
                                     </div>
                                   )}
-
                                   <table className="w-full border-collapse text-xs bg-white">
                                     <thead className="bg-gray-100">
                                       <tr>
@@ -785,7 +888,6 @@ export default function Orders() {
                                         </th>
                                       </tr>
                                     </thead>
-
                                     <tbody>
                                       {detail.order.products.map((p) => (
                                         <tr key={p.productID}>
@@ -797,19 +899,15 @@ export default function Orders() {
                                               {p.productID}
                                             </div>
                                           </td>
-
                                           <td className="p-1 border">
                                             {formatMoney(p.retailPrice)}
                                           </td>
-
                                           <td className="p-1 border">
                                             {formatMoney(p.unitPrice)}
                                           </td>
-
                                           <td className="p-1 border">
                                             {p.quantity}
                                           </td>
-
                                           <td className="p-1 border">
                                             {formatMoney(p.amount)}
                                           </td>
@@ -817,7 +915,6 @@ export default function Orders() {
                                       ))}
                                     </tbody>
                                   </table>
-
                                   <div className="flex justify-between font-semibold border-t pt-2">
                                     <span>Total</span>
                                     <span>
@@ -826,7 +923,6 @@ export default function Orders() {
                                       )}
                                     </span>
                                   </div>
-
                                   {detail.order.creditApplied > 0 && (
                                     <div className="flex justify-between text-green-700">
                                       <span>Store credit applied</span>
@@ -837,7 +933,6 @@ export default function Orders() {
                                       </span>
                                     </div>
                                   )}
-
                                   <div className="flex justify-between">
                                     <span>Paid</span>
                                     <span>
@@ -846,7 +941,6 @@ export default function Orders() {
                                       )}
                                     </span>
                                   </div>
-
                                   <div className="flex justify-between">
                                     <span>Balance Due</span>
                                     <span>
@@ -855,14 +949,12 @@ export default function Orders() {
                                       )}
                                     </span>
                                   </div>
-
                                   {detail.order.editHistory?.length > 0 && (
                                     <div>
                                       <h3 className="font-medium text-brand-green mb-1">
                                         Edit History / Store Credit
                                         Adjustments
                                       </h3>
-
                                       <ul className="text-xs space-y-1">
                                         {detail.order.editHistory.map(
                                           (e, i) => (
@@ -878,7 +970,6 @@ export default function Orders() {
                                                 e.editedAt
                                               ).toLocaleString()}{' '}
                                               — "{e.reason}"
-
                                               {e.settlement === 'credit' && (
                                                 <>
                                                   {' '}
@@ -888,7 +979,6 @@ export default function Orders() {
                                                   )}
                                                 </>
                                               )}
-
                                               {e.settlement === 'cash' && (
                                                 <>
                                                   {' '}
@@ -904,13 +994,11 @@ export default function Orders() {
                                       </ul>
                                     </div>
                                   )}
-
                                   {detail.refunds?.length > 0 && (
                                     <div>
                                       <h3 className="font-medium text-red-600 mb-1">
                                         Refunds
                                       </h3>
-
                                       <ul className="text-xs space-y-1">
                                         {detail.refunds.map((r) => (
                                           <li
@@ -925,7 +1013,6 @@ export default function Orders() {
                                               r.refundDate
                                             ).toLocaleString()}{' '}
                                             — "{r.reason}"
-
                                             {r.settlement === 'credit' && (
                                               <>
                                                 {' '}
@@ -936,7 +1023,6 @@ export default function Orders() {
                                                 store credit
                                               </>
                                             )}
-
                                             {r.settlement === 'cash' && (
                                               <> — cash back</>
                                             )}
@@ -946,7 +1032,6 @@ export default function Orders() {
                                     </div>
                                   )}
                                 </div>
-
                                 {isAdmin &&
                                   detail.order.status !== 'refunded' && (
                                     <div className="space-y-3">
@@ -957,14 +1042,12 @@ export default function Orders() {
                                             <h3 className="font-medium mb-2 text-blue-700">
                                               Convert to customer
                                             </h3>
-
                                             <p className="text-xs text-gray-500 mb-2">
                                               This is a walk-in order. Attach
                                               it to a customer so any store
                                               credit an exchange generates
                                               has an account to land in.
                                             </p>
-
                                             <form
                                               onSubmit={handleConvertSubmit}
                                               className="space-y-2"
@@ -984,7 +1067,6 @@ export default function Orders() {
                                                 }
                                                 className="border rounded px-2 py-1 w-full text-sm"
                                               />
-
                                               <input
                                                 type="text"
                                                 placeholder="Mobile no. (optional)"
@@ -1000,7 +1082,6 @@ export default function Orders() {
                                                 }
                                                 className="border rounded px-2 py-1 w-full text-sm"
                                               />
-
                                               <input
                                                 type="text"
                                                 placeholder="Email (optional)"
@@ -1015,7 +1096,6 @@ export default function Orders() {
                                                 }
                                                 className="border rounded px-2 py-1 w-full text-sm"
                                               />
-
                                               <input
                                                 type="text"
                                                 placeholder="Address (optional)"
@@ -1031,7 +1111,6 @@ export default function Orders() {
                                                 }
                                                 className="border rounded px-2 py-1 w-full text-sm"
                                               />
-
                                               <button
                                                 type="submit"
                                                 disabled={convertingOrder}
@@ -1042,7 +1121,6 @@ export default function Orders() {
                                             </form>
                                           </div>
                                         )}
-
                                       <div className="border border-dashed border-teal-300 rounded-lg p-3 bg-white">
                                         <h3 className="font-medium mb-1 text-teal-700">
                                           Exchange — reduce a line item
@@ -1050,65 +1128,86 @@ export default function Orders() {
                                           {!editWindowOpen(
                                             detail.order
                                           ) && (
-                                            <span className="text-red-500 text-xs">
-                                              (72h window expired)
-                                            </span>
-                                          )}
+                                              <span className="text-red-500 text-xs">
+                                                (72h window expired)
+                                              </span>
+                                            )}
                                         </h3>
-
                                         <p className="text-xs text-gray-500 mb-2">
                                           Any value freed up is settled as
                                           store credit, never cash back.
                                         </p>
-
                                         {editWindowOpen(detail.order) && (
                                           <form
                                             onSubmit={handleEditSubmit}
                                             className="space-y-2"
                                           >
-                                            <select
-                                              value={
-                                                editForm.productID
-                                              }
-                                              onChange={(e) =>
-                                                setEditForm({
-                                                  ...editForm,
-                                                  productID:
-                                                    e.target.value,
-                                                })
-                                              }
-                                              className="border rounded px-2 py-1 w-full text-sm"
+                                            <div
+                                              ref={editProductDropdownRef}
+                                              className="relative w-full"
                                             >
-                                              <option value="">
-                                                Select item
-                                              </option>
-
-                                              {detail.order.products.map(
-                                                (p) => (
-                                                  <option
-                                                    key={p.productID}
-                                                    value={p.productID}
-                                                  >
-                                                    {getProductName(
-                                                      p.productID
-                                                    )}{' '}
-                                                    — {p.productID} (qty{' '}
-                                                    {p.quantity})
-                                                  </option>
-                                                )
+                                              <button
+                                                type="button"
+                                                onClick={() => {
+                                                  setShowEditProductDropdown((prev) => !prev);
+                                                  setEditProductSearch('');
+                                                  setHighlightedEditProductIndex(0);
+                                                }}
+                                                className="border rounded px-2 py-1 w-full text-sm bg-white text-left flex items-center justify-between"
+                                              >
+                                                <span>
+                                                  {editForm.productID
+                                                    ? `${getProductName(editForm.productID)} — ${editForm.productID} (qty ${detail.order.products.find((p) => p.productID === editForm.productID)?.quantity || 0})`
+                                                    : 'Select item'}
+                                                </span>
+                                                <span>▾</span>
+                                              </button>
+                                              {showEditProductDropdown && (
+                                                <div className="absolute left-0 right-0 mt-1 bg-white border border-gray-300 rounded shadow-lg z-50 overflow-hidden">
+                                                  <input
+                                                    ref={editProductSearchRef}
+                                                    type="text"
+                                                    value={editProductSearch}
+                                                    onChange={(e) => setEditProductSearch(e.target.value)}
+                                                    onKeyDown={handleEditProductSearchKeyDown}
+                                                    placeholder="Search product..."
+                                                    className="w-full border-b px-2 py-2 text-sm focus:outline-none"
+                                                  />
+                                                  <div className="max-h-64 overflow-y-auto">
+                                                    {filteredEditProducts.length === 0 ? (
+                                                      <div className="px-2 py-2 text-sm text-gray-500">
+                                                        No products found
+                                                      </div>
+                                                    ) : (
+                                                      filteredEditProducts.map((p, index) => (
+                                                        <button
+                                                          key={p.productID}
+                                                          ref={(el) => {
+                                                            editProductOptionRefs.current[index] = el;
+                                                          }}
+                                                          type="button"
+                                                          onMouseEnter={() => setHighlightedEditProductIndex(index)}
+                                                          onClick={() => selectEditProduct(p.productID)}
+                                                          className={`w-full text-left px-2 py-2 text-sm ${highlightedEditProductIndex === index ? 'bg-blue-100' : 'hover:bg-blue-50'} ${editForm.productID === p.productID ? 'font-medium' : ''}`}
+                                                        >
+                                                          {getProductName(p.productID)} — {p.productID} (qty {p.quantity})
+                                                        </button>
+                                                      ))
+                                                    )}
+                                                  </div>
+                                                </div>
                                               )}
-                                            </select>
-
+                                            </div>
                                             <input
                                               type="number"
                                               min="1"
                                               max={
                                                 editForm.productID
                                                   ? detail.order.products.find(
-                                                      (p) =>
-                                                        p.productID ===
-                                                        editForm.productID
-                                                    )?.quantity
+                                                    (p) =>
+                                                      p.productID ===
+                                                      editForm.productID
+                                                  )?.quantity
                                                   : undefined
                                               }
                                               placeholder="Quantity to remove"
@@ -1124,7 +1223,6 @@ export default function Orders() {
                                               }
                                               className="border rounded px-2 py-1 w-full text-sm"
                                             />
-
                                             <input
                                               type="text"
                                               placeholder="Reason (required)"
@@ -1137,7 +1235,6 @@ export default function Orders() {
                                               }
                                               className="border rounded px-2 py-1 w-full text-sm"
                                             />
-
                                             <button
                                               type="submit"
                                               disabled={editingItem}
@@ -1148,54 +1245,86 @@ export default function Orders() {
                                           </form>
                                         )}
                                       </div>
-
                                       <div className="border border-dashed border-green-300 rounded-lg p-3 bg-white">
                                         <h3 className="font-medium mb-2 text-green-700">
                                           Exchange — add a replacement item
                                         </h3>
-
                                         {editWindowOpen(detail.order) && (
                                           <form
                                             onSubmit={handleAddSubmit}
                                             className="space-y-2"
                                           >
-                                            <select
-                                              value={
-                                                addForm.productID
-                                              }
+                                            <div
+                                              ref={addProductDropdownRef}
+                                              className="relative w-full"
+                                            >
+                                              <button
+                                                type="button"
+                                                onClick={() => {
+                                                  setShowAddProductDropdown((prev) => !prev);
+                                                  setAddProductSearch('');
+                                                  setHighlightedAddProductIndex(0);
+                                                }}
+                                                className="border rounded px-2 py-1 w-full text-sm bg-white text-left flex items-center justify-between"
+                                              >
+                                                <span>
+                                                  {addForm.productID
+                                                    ? `${addForm.productID} — ${getProductName(addForm.productID)}`
+                                                    : 'Select product to add'}
+                                                </span>
+                                                <span>▾</span>
+                                              </button>
+                                              {showAddProductDropdown && (
+                                                <div className="absolute left-0 right-0 mt-1 bg-white border border-gray-300 rounded shadow-lg z-50 overflow-hidden">
+                                                  <input
+                                                    ref={addProductSearchRef}
+                                                    type="text"
+                                                    value={addProductSearch}
+                                                    onChange={(e) => setAddProductSearch(e.target.value)}
+                                                    onKeyDown={handleAddProductSearchKeyDown}
+                                                    placeholder="Search product..."
+                                                    className="w-full border-b px-2 py-2 text-sm focus:outline-none"
+                                                  />
+                                                  <div className="max-h-64 overflow-y-auto">
+                                                    {filteredAddProducts.length === 0 ? (
+                                                      <div className="px-2 py-2 text-sm text-gray-500">
+                                                        No products found
+                                                      </div>
+                                                    ) : (
+                                                      filteredAddProducts.map((p, index) => (
+                                                        <button
+                                                          key={p.productID}
+                                                          ref={(el) => {
+                                                            addProductOptionRefs.current[index] = el;
+                                                          }}
+                                                          type="button"
+                                                          onMouseEnter={() => setHighlightedAddProductIndex(index)}
+                                                          onClick={() => selectAddProduct(p.productID)}
+                                                          className={`w-full text-left px-2 py-2 text-sm ${highlightedAddProductIndex === index ? 'bg-blue-100' : 'hover:bg-blue-50'} ${addForm.productID === p.productID ? 'font-medium' : ''}`}
+                                                        >
+                                                          {p.productID} — {p.productName}
+                                                        </button>
+                                                      ))
+                                                    )}
+                                                  </div>
+                                                </div>
+                                              )}
+                                            </div>
+                                            <input
+                                              type="number"
+                                              min="0.01"
+                                              step="0.01"
+                                              placeholder="Unit Price / Rate"
+                                              value={addForm.unitPrice}
                                               onChange={(e) =>
                                                 setAddForm({
                                                   ...addForm,
-                                                  productID:
+                                                  unitPrice:
                                                     e.target.value,
                                                 })
                                               }
                                               className="border rounded px-2 py-1 w-full text-sm"
-                                            >
-                                              <option value="">
-                                                Select product to add
-                                              </option>
-
-                                              {allProducts
-                                                .filter(
-                                                  (p) =>
-                                                    !detail.order.products.some(
-                                                      (line) =>
-                                                        line.productID ===
-                                                        p.productID
-                                                    )
-                                                )
-                                                .map((p) => (
-                                                  <option
-                                                    key={p.productID}
-                                                    value={p.productID}
-                                                  >
-                                                    {p.productID} —{' '}
-                                                    {p.productName}
-                                                  </option>
-                                                ))}
-                                            </select>
-
+                                            />
                                             <input
                                               type="number"
                                               min="1"
@@ -1210,7 +1339,6 @@ export default function Orders() {
                                               }
                                               className="border rounded px-2 py-1 w-full text-sm"
                                             />
-
                                             <input
                                               type="text"
                                               placeholder="Reason (required)"
@@ -1223,7 +1351,6 @@ export default function Orders() {
                                               }
                                               className="border rounded px-2 py-1 w-full text-sm"
                                             />
-
                                             <button
                                               type="submit"
                                               disabled={addingItem}
@@ -1234,18 +1361,15 @@ export default function Orders() {
                                           </form>
                                         )}
                                       </div>
-
                                       <div className="border border-dashed border-red-300 rounded-lg p-3 bg-white">
                                         <h3 className="font-medium mb-1 text-red-700">
                                           Refund Full Order (Cash Back)
                                         </h3>
-
                                         <p className="text-xs text-gray-500 mb-2">
                                           Refunds every item on this order
                                           for cash. For a partial swap, use
                                           Exchange above instead.
                                         </p>
-
                                         <ul className="text-xs text-gray-600 mb-2 space-y-0.5">
                                           {detail.order.products.map(
                                             (p) => (
@@ -1258,7 +1382,6 @@ export default function Orders() {
                                             )
                                           )}
                                         </ul>
-
                                         <form
                                           onSubmit={handleRefundSubmit}
                                           className="space-y-2"
@@ -1274,7 +1397,6 @@ export default function Orders() {
                                             }
                                             className="border rounded px-2 py-1 w-full text-sm"
                                           />
-
                                           <button
                                             type="submit"
                                             disabled={refundingOrder}
@@ -1296,7 +1418,6 @@ export default function Orders() {
                 )}
               </tbody>
             </table>
-
             <Pagination
               page={page}
               limit={PAGE_SIZE}

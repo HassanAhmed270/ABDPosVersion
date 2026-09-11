@@ -35,7 +35,7 @@ import {
 
 import { isNetworkError, flushQueue } from '../lib/offlineSync';
 
-const emailPattern = /^[^\s@]+\.[^\s@]+$/;
+const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const emptyCustomerForm = {
   customerName: '',
@@ -50,6 +50,7 @@ const WALKIN_CUSTOMER = 'Walk-in / Unknown';
 export default function Billing() {
   const { username, isAdmin } = useAuth();
   const confirm = useConfirm();
+
   const [products, setProducts] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [customerDirectory, setCustomerDirectory] = useState({});
@@ -59,6 +60,18 @@ export default function Billing() {
   const [customer, setCustomer] = useState(WALKIN_CUSTOMER);
   const [showCustomerForm, setShowCustomerForm] = useState(false);
   const [customerForm, setCustomerForm] = useState(emptyCustomerForm);
+
+  /*
+   * CUSTOMER DROPDOWN ONLY
+   */
+  const [customerSearch, setCustomerSearch] = useState('');
+  const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
+  const [highlightedCustomerIndex, setHighlightedCustomerIndex] = useState(0);
+
+  const customerDropdownRef = useRef(null);
+  const customerSearchRef = useRef(null);
+  const customerOptionRefs = useRef([]);
+
   const [itemForm, setItemForm] = useState({
     productId: '',
     productName: '',
@@ -67,26 +80,33 @@ export default function Billing() {
     costPrice: '',
     quantity: '',
   });
+
   const [billingItems, setBillingItems] = useState({});
   const [itemNo, setItemNo] = useState(0);
   const [view, setView] = useState('add');
   const [billId, setBillId] = useState(null);
   const [paid, setPaid] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('cash');
+
   const offlineSyncEnabled = isOfflineSyncEnabled();
+
   const [isOnline, setIsOnline] = useState(
     typeof navigator === 'undefined' ? true : navigator.onLine
   );
 
   useEffect(() => {
     if (!offlineSyncEnabled) return;
+
     const goOnline = () => {
       setIsOnline(true);
       flushQueue();
     };
+
     const goOffline = () => setIsOnline(false);
+
     window.addEventListener('online', goOnline);
     window.addEventListener('offline', goOffline);
+
     return () => {
       window.removeEventListener('online', goOnline);
       window.removeEventListener('offline', goOffline);
@@ -97,17 +117,25 @@ export default function Billing() {
 
   // Prevent double-clicks from reserving stock or generating the same
   // bill twice (see lib/useSubmitGuard.js).
-  const { submitting: addingToBill, guard: guardAddToBill } = useSubmitGuard();
-  const { submitting: generatingBill, guard: guardGenerateBill } = useSubmitGuard();
+  const { submitting: addingToBill, guard: guardAddToBill } =
+    useSubmitGuard();
+
+  const { submitting: generatingBill, guard: guardGenerateBill } =
+    useSubmitGuard();
+
   const webUSBSupported = isWebUSBSupported();
 
   useEffect(() => {
     if (!webUSBSupported) return;
+
     getPairedPrinter().then((device) => setPrinterConnected(!!device));
+
     const onChange = () =>
       getPairedPrinter().then((device) => setPrinterConnected(!!device));
+
     navigator.usb.addEventListener('connect', onChange);
     navigator.usb.addEventListener('disconnect', onChange);
+
     return () => {
       navigator.usb.removeEventListener('connect', onChange);
       navigator.usb.removeEventListener('disconnect', onChange);
@@ -116,8 +144,10 @@ export default function Billing() {
 
   const handleConnectPrinter = async () => {
     const device = await pairThermalPrinter();
+
     if (device) {
       setPrinterConnected(true);
+
       toast.success(
         `Thermal printer paired: ${device.productName || 'USB printer'}`
       );
@@ -131,23 +161,31 @@ export default function Billing() {
   const chooseOverpaymentSettlement = (amount) =>
     new Promise((resolve) => {
       let settled = false;
+
       const settle = (choice) => {
         if (settled) return;
+
         settled = true;
         resolve(choice);
       };
+
       toast(
-        `Customer overpaid by ${formatMoney(amount)}. What should happen with the extra?`,
+        `Customer overpaid by ${formatMoney(
+          amount
+        )}. What should happen with the extra?`,
         {
           duration: Infinity,
+
           action: {
             label: 'Add to Balance',
             onClick: () => settle('balance'),
           },
+
           cancel: {
             label: 'Give Change',
             onClick: () => settle('change'),
           },
+
           onDismiss: () => settle('change'),
           onAutoClose: () => settle('change'),
         }
@@ -169,25 +207,34 @@ export default function Billing() {
     overpaymentChoiceOverride
   ) => {
     const source = itemsOverride ?? billingItems;
+
     const itemsArr = Object.values(source).map((item) => ({
       productID: `#${item.productCode}`,
       productName: item.itemName,
+
       retailPrice:
         item.retailPrice == null
           ? null
           : roundMoney(item.retailPrice),
+
       unitPrice: roundMoney(item.unitPrice),
       quantity: item.quantity,
     }));
+
     try {
       await api.saveDraft({
         billID:
           billIdOverride !== undefined ? billIdOverride : billId,
+
         customerName:
           custOverride !== undefined ? custOverride : customer,
+
         items: itemsArr,
+
         paidInput: parseFloat(paid) || 0,
+
         paymentMethod,
+
         overpaymentChoice:
           overpaymentChoiceOverride || 'change',
       });
@@ -201,9 +248,14 @@ export default function Billing() {
       try {
         await Promise.all([
           loadProducts(),
+
           api.getCustomers().then((c) => {
             const rows = c.customers || [];
-            setCustomers(rows.map((row) => row.customerName));
+
+            setCustomers(
+              rows.map((row) => row.customerName)
+            );
+
             setCustomerDirectory(
               Object.fromEntries(
                 rows.map((row) => [
@@ -213,7 +265,8 @@ export default function Billing() {
                     email: row.email || '',
                     address: row.address || '',
                     creditBalance: row.creditBalance || 0,
-                    totalBalanceDue: row.totalBalanceDue || 0,
+                    totalBalanceDue:
+                      row.totalBalanceDue || 0,
                   },
                 ])
               )
@@ -221,35 +274,53 @@ export default function Billing() {
           }),
         ]);
       } catch (err) {
-        setError(err.message || 'Failed to load billing data');
+        setError(
+          err.message || 'Failed to load billing data'
+        );
       }
 
       try {
         const local = await getLocalDraft();
+
         if (
           local &&
-
           Object.keys(local.billingItems || {}).length > 0
         ) {
-          const count = Object.keys(local.billingItems).length;
+          const count = Object.keys(
+            local.billingItems
+          ).length;
+
           const resume = await confirm(
             `You have an unfinished bill with ${count} item(s) from earlier. Resume it?`
           );
+
           if (resume) {
             setBillingItems(local.billingItems);
+
             setItemNo(
               Math.max(
                 0,
-                ...Object.keys(local.billingItems).map(Number)
+                ...Object.keys(
+                  local.billingItems
+                ).map(Number)
               )
             );
-            setCustomer(local.customer || 'unknown');
+
+            setCustomer(
+              local.customer || 'unknown'
+            );
+
             setBillId(local.billId || null);
+
             setPaid(local.paid || '');
-            setPaymentMethod(local.paymentMethod || 'cash');
+
+            setPaymentMethod(
+              local.paymentMethod || 'cash'
+            );
           } else {
             await clearLocalDraft();
           }
+
           return;
         }
       } catch (err) {
@@ -261,32 +332,68 @@ export default function Billing() {
 
       try {
         const data = await api.getDraft();
-        if (data.draft && data.draft.items?.length > 0) {
+
+        if (
+          data.draft &&
+          data.draft.items?.length > 0
+        ) {
           const resume = await confirm(
             `You have an unfinished bill with ${data.draft.items.length} item(s) from earlier. Resume it?`
           );
+
           if (resume) {
             const restored = {};
-            data.draft.items.forEach((item, idx) => {
-              restored[idx + 1] = {
-                productCode: item.productID.replace('#', ''),
-                itemName: item.productName,
-                retailPrice: item.retailPrice,
-                unitPrice: item.unitPrice,
-                quantity: item.quantity,
-              };
-            });
+
+            data.draft.items.forEach(
+              (item, idx) => {
+                restored[idx + 1] = {
+                  productCode:
+                    item.productID.replace(
+                      '#',
+                      ''
+                    ),
+
+                  itemName:
+                    item.productName,
+
+                  retailPrice:
+                    item.retailPrice,
+
+                  unitPrice:
+                    item.unitPrice,
+
+                  quantity:
+                    item.quantity,
+                };
+              }
+            );
+
             setBillingItems(restored);
-            setItemNo(data.draft.items.length);
-            setCustomer(data.draft.customerName || 'unknown');
-            setBillId(data.draft.billID || null);
+
+            setItemNo(
+              data.draft.items.length
+            );
+
+            setCustomer(
+              data.draft.customerName ||
+                'unknown'
+            );
+
+            setBillId(
+              data.draft.billID || null
+            );
+
             setPaid(
               data.draft.paidInput
-                ? String(data.draft.paidInput)
+                ? String(
+                    data.draft.paidInput
+                  )
                 : ''
             );
+
             setPaymentMethod(
-              data.draft.paymentMethod || 'cash'
+              data.draft.paymentMethod ||
+                'cash'
             );
           } else {
             await api.discardDraft();
@@ -305,18 +412,37 @@ export default function Billing() {
   const draftSaveTimeout = useRef(null);
 
   useEffect(() => {
-    if (Object.keys(billingItems).length === 0) return;
+    if (
+      Object.keys(billingItems).length === 0
+    )
+      return;
+
     if (draftSaveTimeout.current) {
       clearTimeout(draftSaveTimeout.current);
     }
+
     draftSaveTimeout.current = setTimeout(() => {
       saveDraftNow();
     }, 7000);
-    return () => clearTimeout(draftSaveTimeout.current);
-  }, [billingItems, customer, billId, paid, paymentMethod]);
+
+    return () =>
+      clearTimeout(
+        draftSaveTimeout.current
+      );
+  }, [
+    billingItems,
+    customer,
+    billId,
+    paid,
+    paymentMethod,
+  ]);
 
   useEffect(() => {
-    if (Object.keys(billingItems).length === 0) return;
+    if (
+      Object.keys(billingItems).length === 0
+    )
+      return;
+
     saveLocalDraft({
       billingItems,
       customer,
@@ -324,253 +450,596 @@ export default function Billing() {
       paid,
       paymentMethod,
     }).catch((err) =>
-      console.error('Local draft save failed:', err.message)
+      console.error(
+        'Local draft save failed:',
+        err.message
+      )
     );
-  }, [billingItems, customer, billId, paid, paymentMethod]);
+  }, [
+    billingItems,
+    customer,
+    billId,
+    paid,
+    paymentMethod,
+  ]);
 
-  const billingItemsRef = useRef(billingItems);
+  const billingItemsRef =
+    useRef(billingItems);
 
   useEffect(() => {
-    billingItemsRef.current = billingItems;
+    billingItemsRef.current =
+      billingItems;
   }, [billingItems]);
 
   useEffect(() => {
     const releaseAllHeld = () => {
-      const token = localStorage.getItem('pos.token');
-      Object.values(billingItemsRef.current).forEach((item) => {
+      const token =
+        localStorage.getItem('pos.token');
+
+      Object.values(
+        billingItemsRef.current
+      ).forEach((item) => {
         if (item.offline) return;
+
         fetch('/billing/release', {
           method: 'POST',
           keepalive: true,
+
           headers: {
-            'Content-Type': 'application/json',
+            'Content-Type':
+              'application/json',
+
             ...(token
-              ? { Authorization: `Bearer ${token}` }
+              ? {
+                  Authorization: `Bearer ${token}`,
+                }
               : {}),
           },
+
           body: JSON.stringify({
             productId: `#${item.productCode}`,
             quantity: item.quantity,
           }),
-        }).catch(() => { });
+        }).catch(() => {});
       });
     };
 
-    window.addEventListener('beforeunload', releaseAllHeld);
+    window.addEventListener(
+      'beforeunload',
+      releaseAllHeld
+    );
+
     return () => {
       window.removeEventListener(
         'beforeunload',
         releaseAllHeld
       );
+
       releaseAllHeld();
     };
   }, []);
 
   const filteredProducts = useMemo(() => {
     if (!search) return products;
+
     const q = search.toLowerCase();
+
     return products.filter((p) =>
-      p.productName.toLowerCase().startsWith(q)
+      p.productName
+        .toLowerCase()
+        .startsWith(q)
     );
   }, [products, search]);
 
+  /*
+   * CUSTOMER DROPDOWN ONLY
+   *
+   * Search behavior:
+   * 1. Names starting with the search text come first.
+   * 2. Names containing the search text come after.
+   * 3. Results are alphabetically sorted within each group.
+   */
+  const filteredCustomers = useMemo(() => {
+    const q = customerSearch
+      .trim()
+      .toLowerCase();
+
+    if (!q) {
+      return [...customers].sort((a, b) =>
+        a.localeCompare(b)
+      );
+    }
+
+    return customers
+      .filter((name) =>
+        name.toLowerCase().includes(q)
+      )
+      .sort((a, b) => {
+        const aName = a.toLowerCase();
+        const bName = b.toLowerCase();
+
+        const aStarts =
+          aName.startsWith(q);
+
+        const bStarts =
+          bName.startsWith(q);
+
+        if (aStarts !== bStarts) {
+          return aStarts ? -1 : 1;
+        }
+
+        return a.localeCompare(b);
+      });
+  }, [customers, customerSearch]);
+
+  /*
+   * CUSTOMER DROPDOWN ONLY
+   *
+   * Close dropdown when clicking anywhere outside it.
+   */
+  useEffect(() => {
+    const handleOutsideClick = (event) => {
+      if (
+        customerDropdownRef.current &&
+        !customerDropdownRef.current.contains(
+          event.target
+        )
+      ) {
+        setShowCustomerDropdown(false);
+        setCustomerSearch('');
+        setHighlightedCustomerIndex(0);
+      }
+    };
+
+    document.addEventListener(
+      'mousedown',
+      handleOutsideClick
+    );
+
+    return () => {
+      document.removeEventListener(
+        'mousedown',
+        handleOutsideClick
+      );
+    };
+  }, []);
+
+  /*
+   * CUSTOMER DROPDOWN ONLY
+   *
+   * Reset keyboard highlight whenever the
+   * search results change.
+   */
+  useEffect(() => {
+    setHighlightedCustomerIndex(0);
+  }, [customerSearch]);
+
+  /*
+   * CUSTOMER DROPDOWN ONLY
+   *
+   * Keep the highlighted customer visible
+   * while using ArrowUp / ArrowDown.
+   */
+  useEffect(() => {
+    if (
+      !showCustomerDropdown ||
+      filteredCustomers.length === 0
+    ) {
+      return;
+    }
+
+    const option =
+      customerOptionRefs.current[
+        highlightedCustomerIndex
+      ];
+
+    if (option) {
+      option.scrollIntoView({
+        block: 'nearest',
+      });
+    }
+  }, [
+    highlightedCustomerIndex,
+    filteredCustomers,
+    showCustomerDropdown,
+  ]);
+
+  /*
+   * CUSTOMER DROPDOWN ONLY
+   */
+  const openCustomerDropdown = () => {
+    setShowCustomerDropdown(true);
+    setCustomerSearch('');
+    setHighlightedCustomerIndex(0);
+
+    setTimeout(() => {
+      customerSearchRef.current?.focus();
+    }, 0);
+  };
+
+  /*
+   * CUSTOMER DROPDOWN ONLY
+   */
+  const closeCustomerDropdown = () => {
+    setShowCustomerDropdown(false);
+    setCustomerSearch('');
+    setHighlightedCustomerIndex(0);
+  };
+
+  /*
+   * CUSTOMER DROPDOWN ONLY
+   */
+  const selectCustomerFromDropdown = (
+    value
+  ) => {
+    handleCustomerSelect(value);
+    closeCustomerDropdown();
+  };
+
+  /*
+   * CUSTOMER DROPDOWN ONLY
+   */
+  const handleCustomerSearchKeyDown = (
+    e
+  ) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+
+      if (
+        filteredCustomers.length === 0
+      ) {
+        return;
+      }
+
+      setHighlightedCustomerIndex(
+        (current) =>
+          Math.min(
+            current + 1,
+            filteredCustomers.length - 1
+          )
+      );
+
+      return;
+    }
+
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+
+      if (
+        filteredCustomers.length === 0
+      ) {
+        return;
+      }
+
+      setHighlightedCustomerIndex(
+        (current) =>
+          Math.max(current - 1, 0)
+      );
+
+      return;
+    }
+
+    if (e.key === 'Enter') {
+      e.preventDefault();
+
+      const selected =
+        filteredCustomers[
+          highlightedCustomerIndex
+        ];
+
+      if (selected) {
+        selectCustomerFromDropdown(
+          selected
+        );
+      }
+
+      return;
+    }
+
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closeCustomerDropdown();
+    }
+  };
+
   const grandTotal = useMemo(() => {
-    const total = Object.values(billingItems).reduce(
+    const total = Object.values(
+      billingItems
+    ).reduce(
       (sum, item) =>
-        sum + Number(item.unitPrice || 0) * Number(item.quantity || 0),
+        sum +
+        Number(item.unitPrice || 0) *
+          Number(item.quantity || 0),
       0
     );
+
     return roundMoney(total);
   }, [billingItems]);
 
   const balance = useMemo(() => {
-    const paidNum = parseFloat(paid) || 0;
-    return roundMoney(paidNum - grandTotal);
+    const paidNum =
+      parseFloat(paid) || 0;
+
+    return roundMoney(
+      paidNum - grandTotal
+    );
   }, [paid, grandTotal]);
 
-  const handleSelectProduct = (product) => {
-    setSelectedProductId(product.productID);
+  const handleSelectProduct = (
+    product
+  ) => {
+    setSelectedProductId(
+      product.productID
+    );
+
     // No catalog selling price set — leave both fields blank instead of
     // defaulting to 0, so the cashier has to enter a real rate rather
     // than silently ringing the item up for free.
     const hasCatalogPrice =
-      product.price != null && Number(product.price) > 0;
-    const currentPrice = hasCatalogPrice
-      ? roundMoney(product.price)
-      : '';
+      product.price != null &&
+      Number(product.price) > 0;
+
+    const currentPrice =
+      hasCatalogPrice
+        ? roundMoney(product.price)
+        : '';
+
     setItemForm({
       productId: product.productID,
-      productName: product.productName,
+      productName:
+        product.productName,
       retailPrice: currentPrice,
       unitPrice: currentPrice,
-      costPrice: product.costPrice ?? 0,
+      costPrice:
+        product.costPrice ?? 0,
       quantity: '',
     });
   };
 
-  const handleAddToBill = guardAddToBill(async () => {
-    if (!selectedProductId) {
-      toast.error('Please select a product from the table first!');
-      return;
-    }
-
-    const quantity = parseInt(itemForm.quantity);
-    // Retail Price is a disabled, catalog-driven field — the cashier
-    // never types into it directly. When the product has no catalog
-    // selling price at all, itemForm.retailPrice is '' (see
-    // handleSelectProduct) rather than a real number, so there's no
-    // reference price to require or cap the sale against.
-    const hasRetailPrice = itemForm.retailPrice !== '' && itemForm.retailPrice != null;
-    const retailPrice = hasRetailPrice ? roundMoney(itemForm.retailPrice) : null;
-    const unitPrice = roundMoney(itemForm.unitPrice);
-
-    if (
-      !itemForm.productName ||
-      !Number.isFinite(unitPrice) ||
-      unitPrice < 0 ||
-      !Number.isInteger(quantity) ||
-      quantity <= 0
-    ) {
-      toast.error('Please enter valid item details!');
-      return;
-    }
-
-    if (retailPrice !== null && unitPrice > retailPrice) {
-      toast.error('Unit Price cannot be greater than Retail Price.');
-      return;
-    }
-
-    // From here on, retailPrice must be a real number: the receipt's
-    // "Retail" column and Order.retailPrice (required, min 0) both need
-    // one. When there's no catalog price to show, mirror the rate the
-    // cashier actually charged rather than recording a false Rs 0.
-    const effectiveRetailPrice = retailPrice;
-
-    const product = products.find(
-      (p) => p.productID === selectedProductId
-    );
-
-    if (!product) {
-      toast.error('Invalid product selection!');
-      return;
-    }
-
-    let reserved;
-
-    try {
-      reserved = await api.reserveStock(
-        selectedProductId,
-        quantity
-      );
-    } catch (err) {
-      if (
-        offlineSyncEnabled &&
-        isNetworkError(err)
-      ) {
-        const alreadyInCart = Object.values(billingItems)
-          .filter(
-            (item) =>
-              item.productCode ===
-              selectedProductId.replace('#', '')
-          )
-          .reduce(
-            (sum, item) => sum + item.quantity,
-            0
-          );
-
-        const softAvailable =
-          (product.available ??
-            product.quantity -
-            (product.reserved || 0)) -
-          alreadyInCart;
-
-        if (softAvailable < quantity) {
-          toast.error(
-            `Offline — based on the last known stock, only ${Math.max(
-              softAvailable,
-              0
-            )} unit(s) of this item look available.`
-          );
-          return;
-        }
-
-        const nextItemNo = itemNo + 1;
-        setItemNo(nextItemNo);
-        setBillingItems((prev) => ({
-          ...prev,
-          [nextItemNo]: {
-            productCode:
-              selectedProductId.replace('#', ''),
-            itemName: itemForm.productName,
-            retailPrice: effectiveRetailPrice,
-            unitPrice,
-            quantity,
-            offline: true,
-          },
-        }));
-
-        setItemForm({
-          productId: '',
-          productName: '',
-          retailPrice: '',
-          unitPrice: '',
-          costPrice: '',
-          quantity: '',
-        });
-
-        setSelectedProductId(null);
+  const handleAddToBill =
+    guardAddToBill(async () => {
+      if (!selectedProductId) {
+        toast.error(
+          'Please select a product from the table first!'
+        );
         return;
       }
 
-      toast.error(
-        err.message ||
-        'Could not reserve stock for this item.'
+      const quantity = parseInt(
+        itemForm.quantity
       );
-      await loadProducts();
-      return;
-    }
 
-    setProducts((prev) =>
-      prev.map((p) =>
-        p.productID === selectedProductId
-          ? {
-            ...p,
-            quantity: reserved.quantity,
-            reserved: reserved.reserved,
-            available: reserved.available,
-            lowStock:
-              reserved.available <=
-              (p.lowStockThreshold ?? 10),
+      // Retail Price is a disabled, catalog-driven field — the cashier
+      // never types into it directly. When the product has no catalog
+      // selling price at all, itemForm.retailPrice is '' (see
+      // handleSelectProduct) rather than a real number, so there's no
+      // reference price to require or cap the sale against.
+      const hasRetailPrice =
+        itemForm.retailPrice !== '' &&
+        itemForm.retailPrice != null;
+
+      const retailPrice =
+        hasRetailPrice
+          ? roundMoney(
+              itemForm.retailPrice
+            )
+          : null;
+
+      const unitPrice = roundMoney(
+        itemForm.unitPrice
+      );
+
+      if (
+        !itemForm.productName ||
+        !Number.isFinite(unitPrice) ||
+        unitPrice < 0 ||
+        !Number.isInteger(quantity) ||
+        quantity <= 0
+      ) {
+        toast.error(
+          'Please enter valid item details!'
+        );
+        return;
+      }
+
+      if (
+        retailPrice !== null &&
+        unitPrice > retailPrice
+      ) {
+        toast.error(
+          'Unit Price cannot be greater than Retail Price.'
+        );
+        return;
+      }
+
+      // From here on, retailPrice must be a real number: the receipt's
+      // "Retail" column and Order.retailPrice (required, min 0) both need
+      // one. When there's no catalog price to show, mirror the rate the
+      // cashier actually charged rather than recording a false Rs 0.
+      const effectiveRetailPrice =
+        retailPrice;
+
+      const product = products.find(
+        (p) =>
+          p.productID ===
+          selectedProductId
+      );
+
+      if (!product) {
+        toast.error(
+          'Invalid product selection!'
+        );
+        return;
+      }
+
+      let reserved;
+
+      try {
+        reserved =
+          await api.reserveStock(
+            selectedProductId,
+            quantity
+          );
+      } catch (err) {
+        if (
+          offlineSyncEnabled &&
+          isNetworkError(err)
+        ) {
+          const alreadyInCart =
+            Object.values(
+              billingItems
+            )
+              .filter(
+                (item) =>
+                  item.productCode ===
+                  selectedProductId.replace(
+                    '#',
+                    ''
+                  )
+              )
+              .reduce(
+                (sum, item) =>
+                  sum + item.quantity,
+                0
+              );
+
+          const softAvailable =
+            (product.available ??
+              product.quantity -
+                (product.reserved ||
+                  0)) -
+            alreadyInCart;
+
+          if (
+            softAvailable < quantity
+          ) {
+            toast.error(
+              `Offline — based on the last known stock, only ${Math.max(
+                softAvailable,
+                0
+              )} unit(s) of this item look available.`
+            );
+            return;
           }
-          : p
-      )
-    );
 
-    const nextItemNo = itemNo + 1;
-    setItemNo(nextItemNo);
-    setBillingItems((prev) => ({
-      ...prev,
-      [nextItemNo]: {
-        productCode:
-          selectedProductId.replace('#', ''),
-        itemName: itemForm.productName,
-        retailPrice: effectiveRetailPrice,
-        unitPrice,
-        quantity,
-      },
-    }));
+          const nextItemNo =
+            itemNo + 1;
 
-    setItemForm({
-      productId: '',
-      productName: '',
-      retailPrice: '',
-      unitPrice: '',
-      costPrice: '',
-      quantity: '',
+          setItemNo(nextItemNo);
+
+          setBillingItems(
+            (prev) => ({
+              ...prev,
+
+              [nextItemNo]: {
+                productCode:
+                  selectedProductId.replace(
+                    '#',
+                    ''
+                  ),
+
+                itemName:
+                  itemForm.productName,
+
+                retailPrice:
+                  effectiveRetailPrice,
+
+                unitPrice,
+
+                quantity,
+
+                offline: true,
+              },
+            })
+          );
+
+          setItemForm({
+            productId: '',
+            productName: '',
+            retailPrice: '',
+            unitPrice: '',
+            costPrice: '',
+            quantity: '',
+          });
+
+          setSelectedProductId(null);
+
+          return;
+        }
+
+        toast.error(
+          err.message ||
+            'Could not reserve stock for this item.'
+        );
+
+        await loadProducts();
+
+        return;
+      }
+
+      setProducts((prev) =>
+        prev.map((p) =>
+          p.productID ===
+          selectedProductId
+            ? {
+                ...p,
+
+                quantity:
+                  reserved.quantity,
+
+                reserved:
+                  reserved.reserved,
+
+                available:
+                  reserved.available,
+
+                lowStock:
+                  reserved.available <=
+                  (p.lowStockThreshold ??
+                    10),
+              }
+            : p
+        )
+      );
+
+      const nextItemNo =
+        itemNo + 1;
+
+      setItemNo(nextItemNo);
+
+      setBillingItems((prev) => ({
+        ...prev,
+
+        [nextItemNo]: {
+          productCode:
+            selectedProductId.replace(
+              '#',
+              ''
+            ),
+
+          itemName:
+            itemForm.productName,
+
+          retailPrice:
+            effectiveRetailPrice,
+
+          unitPrice,
+
+          quantity,
+        },
+      }));
+
+      setItemForm({
+        productId: '',
+        productName: '',
+        retailPrice: '',
+        unitPrice: '',
+        costPrice: '',
+        quantity: '',
+      });
+
+      setSelectedProductId(null);
     });
-
-    setSelectedProductId(null);
-  });
 
   const handlePreview = async () => {
     if (billId) {
@@ -581,26 +1050,28 @@ export default function Billing() {
     try {
       // Offline: no server to allocate a real sequential number from, so
       // this is only ever a local, throwaway reference shown on the
-      // "OFFLINE — PENDING SYNC" receipt — the real "INV-dddd" invoice
-      // number is assigned once this sale actually syncs (see
-      // lib/offlineSync.js's allocateOrderId). Not shown to the cashier
-      // as "the" invoice number for that reason.
-      if (offlineSyncEnabled && !isOnline) {
+      // "OFFLINE — PENDING SYNC" receipt.
+      if (
+        offlineSyncEnabled &&
+        !isOnline
+      ) {
         const localPlaceholder =
           '#' +
-          Math.floor(Math.random() * 10000)
+          Math.floor(
+            Math.random() * 10000
+          )
             .toString()
             .padStart(4, '0');
 
         setBillId(localPlaceholder);
         setView('preview');
+
         return;
       }
 
-      // Online: the real, sequential invoice number — allocated once,
-      // atomically, server-side (lib/orderId.js). No more client-side
-      // guessing/retry loop.
-      const { invoiceId } = await api.nextInvoiceId();
+      // Online: the real, sequential invoice number.
+      const { invoiceId } =
+        await api.nextInvoiceId();
 
       setBillId(invoiceId);
 
@@ -613,21 +1084,29 @@ export default function Billing() {
       setView('preview');
     } catch (err) {
       toast.error(
-        'Error generating bill id: ' + err.message
+        'Error generating bill id: ' +
+          err.message
       );
     }
   };
 
   const removeItem = async (key) => {
-    if (!(await confirm('Do you want to remove this item?'))) {
+    if (
+      !(await confirm(
+        'Do you want to remove this item?'
+      ))
+    ) {
       return;
     }
 
-    const item = billingItems[key];
+    const item =
+      billingItems[key];
 
     setBillingItems((prev) => {
       const next = { ...prev };
+
       delete next[key];
+
       return next;
     });
 
@@ -636,23 +1115,31 @@ export default function Billing() {
         return;
       }
 
-      const released = await api.releaseStock(
-        `#${item.productCode}`,
-        item.quantity
-      );
+      const released =
+        await api.releaseStock(
+          `#${item.productCode}`,
+          item.quantity
+        );
 
       setProducts((prev) =>
         prev.map((p) =>
-          p.productID === `#${item.productCode}`
+          p.productID ===
+          `#${item.productCode}`
             ? {
-              ...p,
-              quantity:
-                released.quantity ?? p.quantity,
-              reserved:
-                released.reserved ?? p.reserved,
-              available:
-                released.available ?? p.available,
-            }
+                ...p,
+
+                quantity:
+                  released.quantity ??
+                  p.quantity,
+
+                reserved:
+                  released.reserved ??
+                  p.reserved,
+
+                available:
+                  released.available ??
+                  p.available,
+              }
             : p
         )
       );
@@ -672,16 +1159,18 @@ export default function Billing() {
     setPaymentMethod('cash');
     setView('add');
 
-    clearLocalDraft().catch((err) =>
-      console.error(
-        'Failed to clear local draft:',
-        err.message
-      )
+    clearLocalDraft().catch(
+      (err) =>
+        console.error(
+          'Failed to clear local draft:',
+          err.message
+        )
     );
   };
 
   const handleCancel = async () => {
     await saveDraftNow();
+
     resetBill();
 
     try {
@@ -707,326 +1196,570 @@ export default function Billing() {
     receiptBillId = null,
     receiptOldBalance = null
   ) => {
-    const itemsSource = receiptItems || Object.values(billingItems);
-    const customerName = receiptCustomer || customer;
-    const currentBillId = receiptBillId || billId;
+    const itemsSource =
+      receiptItems ||
+      Object.values(billingItems);
 
-    const isOverpaid = paidNum > total;
+    const customerName =
+      receiptCustomer || customer;
+
+    const currentBillId =
+      receiptBillId || billId;
+
+    const isOverpaid =
+      paidNum > total;
+
     const settlementLabel =
       paidNum < total
         ? 'Balance Due (Credit)'
         : isOverpaid &&
-          overpaymentChoice === 'balance'
-          ? 'Added to Customer Balance'
-          : 'Change';
+          overpaymentChoice ===
+            'balance'
+        ? 'Added to Customer Balance'
+        : 'Change';
 
-    const settlementAmount = formatMoney(
-      Math.abs(paidNum - total)
-    );
-
-    // Account balance block (Old/Total/Cash Received/Net Balance) only
-    // applies to a real, on-file customer — never Walk-in — and only
-    // when the caller actually resolved a pre-sale balance for them.
-    // receiptOldBalance is the customer's signed accountBalance as it
-    // stood *before* this sale (positive = owed, negative = credit).
-    const showAccountBalance =
-      customerName !== WALKIN_CUSTOMER &&
-      receiptOldBalance !== null &&
-      receiptOldBalance !== undefined;
-
-    const oldBalanceNum = showAccountBalance
-      ? roundMoney(receiptOldBalance)
-      : 0;
-    const totalBalanceNum = roundMoney(oldBalanceNum + total);
-    const netBalanceNum = roundMoney(totalBalanceNum - paidNum);
-
-    const items = itemsSource.map((item) => {
-      const subtotal = roundMoney(
-        Number(item.unitPrice || 0) *
-        Number(item.quantity || 0)
+    const settlementAmount =
+      formatMoney(
+        Math.abs(paidNum - total)
       );
 
-      return {
-        itemName: item.itemName,
-        retailLabel:
-          item.retailPrice == null
-            ? ''
-            : formatMoneyShort(roundMoney(item.retailPrice)),
-        rateLabel: formatMoneyShort(
-          roundMoney(item.unitPrice)
-        ),
-        qty: item.quantity,
-        subtotalLabel: formatMoneyShort(subtotal),
-        totalLabel: formatMoneyShort(subtotal),
-      };
-    });
+    const showAccountBalance =
+      customerName !==
+        WALKIN_CUSTOMER &&
+      receiptOldBalance !== null &&
+      receiptOldBalance !==
+        undefined;
 
-    if (webUSBSupported) {
-      const printed = await tryThermalPrint({
-        billId: currentBillId,
-        offline,
-        items: itemsSource.map((item) => ({
+    const oldBalanceNum =
+      showAccountBalance
+        ? roundMoney(
+            receiptOldBalance
+          )
+        : 0;
+
+    const totalBalanceNum =
+      roundMoney(
+        oldBalanceNum + total
+      );
+
+    const netBalanceNum =
+      roundMoney(
+        totalBalanceNum - paidNum
+      );
+
+    const items = itemsSource.map(
+      (item) => {
+        const subtotal =
+          roundMoney(
+            Number(
+              item.unitPrice || 0
+            ) *
+              Number(
+                item.quantity || 0
+              )
+          );
+
+        return {
           itemName: item.itemName,
-          quantity: item.quantity,
-          retailPriceLabel:
+
+          retailLabel:
             item.retailPrice == null
               ? ''
-              : formatMoney(roundMoney(item.retailPrice)),
-          unitPriceLabel: formatMoney(
-            roundMoney(item.unitPrice)
+              : formatMoneyShort(
+                  roundMoney(
+                    item.retailPrice
+                  )
+                ),
+
+          rateLabel:
+            formatMoneyShort(
+              roundMoney(
+                item.unitPrice
+              )
+            ),
+
+          qty: item.quantity,
+
+          subtotalLabel:
+            formatMoneyShort(
+              subtotal
+            ),
+
+          totalLabel:
+            formatMoneyShort(
+              subtotal
+            ),
+        };
+      }
+    );
+
+    if (webUSBSupported) {
+      const printed =
+        await tryThermalPrint({
+          billId: currentBillId,
+
+          offline,
+
+          items: itemsSource.map(
+            (item) => ({
+              itemName:
+                item.itemName,
+
+              quantity:
+                item.quantity,
+
+              retailPriceLabel:
+                item.retailPrice ==
+                null
+                  ? ''
+                  : formatMoney(
+                      roundMoney(
+                        item.retailPrice
+                      )
+                    ),
+
+              unitPriceLabel:
+                formatMoney(
+                  roundMoney(
+                    item.unitPrice
+                  )
+                ),
+
+              totalLabel:
+                formatMoney(
+                  roundMoney(
+                    Number(
+                      item.unitPrice ||
+                        0
+                    ) *
+                      Number(
+                        item.quantity ||
+                          0
+                      )
+                  )
+                ),
+            })
           ),
-          totalLabel: formatMoney(
-            roundMoney(
-              Number(item.unitPrice || 0) *
-              Number(item.quantity || 0)
-            )
-          ),
-        })),
-        totalLabel: formatMoney(total),
-        paidLabel: formatMoney(paidNum),
-        settlementLabel,
-        settlementAmountLabel: settlementAmount,
-        customer: customerName,
-        showAccountBalance,
-        oldBalanceLabel: formatMoney(oldBalanceNum),
-        totalBalanceLabel: formatMoney(totalBalanceNum),
-        cashReceivedLabel: formatMoney(paidNum),
-        netBalanceLabel: formatMoney(netBalanceNum),
-      });
+
+          totalLabel:
+            formatMoney(total),
+
+          paidLabel:
+            formatMoney(paidNum),
+
+          settlementLabel,
+
+          settlementAmountLabel:
+            settlementAmount,
+
+          customer:
+            customerName,
+
+          showAccountBalance,
+
+          oldBalanceLabel:
+            formatMoney(
+              oldBalanceNum
+            ),
+
+          totalBalanceLabel:
+            formatMoney(
+              totalBalanceNum
+            ),
+
+          cashReceivedLabel:
+            formatMoney(paidNum),
+
+          netBalanceLabel:
+            formatMoney(
+              netBalanceNum
+            ),
+        });
 
       if (printed) {
         toast.success(
           'Printed to thermal printer.'
         );
+
         return;
       }
     }
 
-    const html = buildReceiptHtml({
-      shopName: SHOP_NAME,
-      shopAddress: SHOP_ADDRESS,
-      shopPhone: SHOP_PHONE,
-      billId: currentBillId,
-      offline,
-      customerName:
-        customerName === WALKIN_CUSTOMER
-          ? 'Walk-in'
-          : customerName,
-      customerAddress:
-        customerDirectory[customerName]?.address || '',
-      items,
-      grandTotalLabel: formatMoney(total),
-      paidLabel: formatMoney(paidNum),
-      settlementLabel,
-      settlementAmountLabel: settlementAmount,
-      showAccountBalance,
-      oldBalanceLabel: formatMoney(oldBalanceNum),
-      totalBalanceLabel: formatMoney(totalBalanceNum),
-      cashReceivedLabel: formatMoney(paidNum),
-      netBalanceLabel: formatMoney(netBalanceNum),
-    });
+    const html =
+      buildReceiptHtml({
+        shopName: SHOP_NAME,
+        shopAddress:
+          SHOP_ADDRESS,
+        shopPhone: SHOP_PHONE,
+
+        billId:
+          currentBillId,
+
+        offline,
+
+        customerName:
+          customerName ===
+          WALKIN_CUSTOMER
+            ? 'Walk-in'
+            : customerName,
+
+        customerAddress:
+          customerDirectory[
+            customerName
+          ]?.address || '',
+
+        items,
+
+        grandTotalLabel:
+          formatMoney(total),
+
+        paidLabel:
+          formatMoney(paidNum),
+
+        settlementLabel,
+
+        settlementAmountLabel:
+          settlementAmount,
+
+        showAccountBalance,
+
+        oldBalanceLabel:
+          formatMoney(
+            oldBalanceNum
+          ),
+
+        totalBalanceLabel:
+          formatMoney(
+            totalBalanceNum
+          ),
+
+        cashReceivedLabel:
+          formatMoney(paidNum),
+
+        netBalanceLabel:
+          formatMoney(
+            netBalanceNum
+          ),
+      });
 
     printReceipt(html);
   };
 
-  const handleGenerateBill = guardGenerateBill(async () => {
-    const total = grandTotal;
-    const paidNum = parseFloat(paid) || 0;
-    const receiptItems = Object.values(billingItems).map((item) => ({
-      productCode: item.productCode,
-      itemName: item.itemName,
-      retailPrice:
-        item.retailPrice == null
-          ? null
-          : roundMoney(item.retailPrice),
-      unitPrice: roundMoney(item.unitPrice),
-      quantity: Number(item.quantity),
-    }));
-    const receiptCustomer = customer;
-    const receiptBillId = billId;
+  const handleGenerateBill =
+    guardGenerateBill(async () => {
+      const total =
+        grandTotal;
 
-    if (paidNum < 0) {
-      toast.error(
-        "Payment amount can't be negative."
-      );
-      return;
-    }
+      const paidNum =
+        parseFloat(paid) || 0;
 
-    if (customer === 'unknown') {
-      toast.error(
-        'Please select a customer before generating the bill.'
-      );
-      return;
-    }
+      const receiptItems =
+        Object.values(
+          billingItems
+        ).map((item) => ({
+          productCode:
+            item.productCode,
 
-    if (paidNum < total) {
-      const shortfall = roundMoney(
-        total - paidNum
-      );
+          itemName:
+            item.itemName,
 
-      const proceed = await confirm(
-        `Customer is paying ${formatMoney(
-          paidNum
-        )} of ${formatMoney(
-          total
-        )}. ${formatMoney(
-          shortfall
-        )} will be recorded as a balance owed on their account. Continue?`
-      );
+          retailPrice:
+            item.retailPrice == null
+              ? null
+              : roundMoney(
+                  item.retailPrice
+                ),
 
-      if (!proceed) return;
-    }
+          unitPrice:
+            roundMoney(
+              item.unitPrice
+            ),
 
-    let overpaymentChoice = 'change';
-    const overpaidAmount = roundMoney(
-      paidNum - total
-    );
+          quantity:
+            Number(
+              item.quantity
+            ),
+        }));
 
-    if (
-      overpaidAmount > 0 &&
-      customer !== WALKIN_CUSTOMER &&
-      (!offlineSyncEnabled || isOnline)
-    ) {
-      overpaymentChoice =
-        await chooseOverpaymentSettlement(
-          overpaidAmount
-        );
-    }
+      const receiptCustomer =
+        customer;
 
-    try {
-      await saveDraftNow(
-        undefined,
-        undefined,
-        undefined,
-        overpaymentChoice
-      );
+      const receiptBillId =
+        billId;
 
-      console.log('========== GENERATING BILL ==========');
-      console.log('Bill ID:', billId);
-      console.log('Customer:', customer);
-      console.log('Items:', Object.values(billingItems).map((item) => ({
-        productID: `#${item.productCode}`,
-        productName: item.itemName,
-        retailPrice: item.retailPrice,
-        unitPrice: item.unitPrice,
-        quantity: item.quantity,
-        subtotal: roundMoney(item.unitPrice * item.quantity),
-      })));
-      console.log('Grand Total:', total);
-      console.log('Paid:', paidNum);
-      console.log('Payment Method:', paymentMethod);
-      console.log('Overpayment Choice:', overpaymentChoice);
-      console.log('Balance:', roundMoney(paidNum - total));
-      console.log('======================================');
-
-      const data = await api.saveOrder();
-
-      if (!data.success) {
+      if (paidNum < 0) {
         toast.error(
-          data.message ||
-          'Order failed. Try again.'
+          "Payment amount can't be negative."
         );
+
         return;
       }
 
-      // data.customer is the customer document as it stood *before*
-      // this order was applied (routes/billing.js reads it ahead of the
-      // transaction) — exactly the "old balance" the receipt needs.
-      // null for a Walk-in sale, which has no Customer document.
-      const oldBalance = data.customer
-        ? data.customer.accountBalance
-        : null;
+      if (customer === 'unknown') {
+        toast.error(
+          'Please select a customer before generating the bill.'
+        );
 
-      await printReceiptFor(
-        total,
-        paidNum,
-        false,
-        overpaymentChoice,
-        data.order,
-        receiptItems,
-        receiptCustomer,
-        receiptBillId,
-        oldBalance
-      );
+        return;
+      }
 
-      toast.success(
-        'Order saved successfully.'
-      );
+      if (paidNum < total) {
+        const shortfall =
+          roundMoney(
+            total - paidNum
+          );
 
-      resetBill();
-      setCustomer('unknown');
-      await loadProducts();
-    } catch (err) {
+        const proceed =
+          await confirm(
+            `Customer is paying ${formatMoney(
+              paidNum
+            )} of ${formatMoney(
+              total
+            )}. ${formatMoney(
+              shortfall
+            )} will be recorded as a balance owed on their account. Continue?`
+          );
+
+        if (!proceed) return;
+      }
+
+      let overpaymentChoice =
+        'change';
+
+      const overpaidAmount =
+        roundMoney(
+          paidNum - total
+        );
+
       if (
-        offlineSyncEnabled &&
-        isNetworkError(err)
+        overpaidAmount > 0 &&
+        customer !==
+          WALKIN_CUSTOMER &&
+        (!offlineSyncEnabled ||
+          isOnline)
       ) {
-        try {
-          await enqueueSale({
-            idempotencyKey:
-              crypto.randomUUID(),
-            clientBillID: billId,
-            customerName: customer,
-            items: receiptItems.map((item) => ({
-              productID: `#${item.productCode}`,
-              productName: item.itemName,
-              retailPrice: item.retailPrice,
-              unitPrice: item.unitPrice,
-              quantity: item.quantity,
-            })),
-            paidInput: paidNum,
-            paymentMethod,
-            createdOfflineAt:
-              new Date().toISOString(),
-          });
-
-          // Offline: no server round-trip to get a fresh pre-sale
-          // balance, so fall back to the locally cached directory
-          // (last value synced from the server this session).
-          const cachedCustomer =
-            customerDirectory[receiptCustomer];
-          const offlineOldBalance = cachedCustomer
-            ? roundMoney(
-              (cachedCustomer.totalBalanceDue || 0) -
-              (cachedCustomer.creditBalance || 0)
-            )
-            : null;
-
-          await printReceiptFor(
-            total,
-            paidNum,
-            true,
-            'change',
-            null,
-            receiptItems,
-            receiptCustomer,
-            receiptBillId,
-            offlineOldBalance
+        overpaymentChoice =
+          await chooseOverpaymentSettlement(
+            overpaidAmount
           );
+      }
 
-          toast.success(
-            "No connection — this bill has been saved on this device and will sync automatically once you're back online."
-          );
+      try {
+        await saveDraftNow(
+          undefined,
+          undefined,
+          undefined,
+          overpaymentChoice
+        );
 
-          resetBill();
-          setCustomer('unknown');
-        } catch (queueErr) {
+        console.log(
+          '========== GENERATING BILL =========='
+        );
+
+        console.log(
+          'Bill ID:',
+          billId
+        );
+
+        console.log(
+          'Customer:',
+          customer
+        );
+
+        console.log(
+          'Items:',
+          Object.values(
+            billingItems
+          ).map((item) => ({
+            productID: `#${item.productCode}`,
+            productName:
+              item.itemName,
+
+            retailPrice:
+              item.retailPrice,
+
+            unitPrice:
+              item.unitPrice,
+
+            quantity:
+              item.quantity,
+
+            subtotal:
+              roundMoney(
+                item.unitPrice *
+                  item.quantity
+              ),
+          }))
+        );
+
+        console.log(
+          'Grand Total:',
+          total
+        );
+
+        console.log(
+          'Paid:',
+          paidNum
+        );
+
+        console.log(
+          'Payment Method:',
+          paymentMethod
+        );
+
+        console.log(
+          'Overpayment Choice:',
+          overpaymentChoice
+        );
+
+        console.log(
+          'Balance:',
+          roundMoney(
+            paidNum - total
+          )
+        );
+
+        console.log(
+          '======================================'
+        );
+
+        const data =
+          await api.saveOrder();
+
+        if (!data.success) {
           toast.error(
-            'Could not save this bill, even offline: ' +
-            queueErr.message
+            data.message ||
+              'Order failed. Try again.'
           );
+
+          return;
         }
 
-        return;
+        const oldBalance =
+          data.customer
+            ? data.customer
+                .accountBalance
+            : null;
+
+        await printReceiptFor(
+          total,
+          paidNum,
+          false,
+          overpaymentChoice,
+          data.order,
+          receiptItems,
+          receiptCustomer,
+          receiptBillId,
+          oldBalance
+        );
+
+        toast.success(
+          'Order saved successfully.'
+        );
+
+        resetBill();
+
+        setCustomer('unknown');
+
+        await loadProducts();
+      } catch (err) {
+        if (
+          offlineSyncEnabled &&
+          isNetworkError(err)
+        ) {
+          try {
+            await enqueueSale({
+              idempotencyKey:
+                crypto.randomUUID(),
+
+              clientBillID:
+                billId,
+
+              customerName:
+                customer,
+
+              items:
+                receiptItems.map(
+                  (item) => ({
+                    productID: `#${item.productCode}`,
+
+                    productName:
+                      item.itemName,
+
+                    retailPrice:
+                      item.retailPrice,
+
+                    unitPrice:
+                      item.unitPrice,
+
+                    quantity:
+                      item.quantity,
+                  })
+                ),
+
+              paidInput:
+                paidNum,
+
+              paymentMethod,
+
+              createdOfflineAt:
+                new Date().toISOString(),
+            });
+
+            const cachedCustomer =
+              customerDirectory[
+                receiptCustomer
+              ];
+
+            const offlineOldBalance =
+              cachedCustomer
+                ? roundMoney(
+                    (cachedCustomer.totalBalanceDue ||
+                      0) -
+                      (cachedCustomer.creditBalance ||
+                        0)
+                  )
+                : null;
+
+            await printReceiptFor(
+              total,
+              paidNum,
+              true,
+              'change',
+              null,
+              receiptItems,
+              receiptCustomer,
+              receiptBillId,
+              offlineOldBalance
+            );
+
+            toast.success(
+              "No connection — this bill has been saved on this device and will sync automatically once you're back online."
+            );
+
+            resetBill();
+
+            setCustomer('unknown');
+          } catch (queueErr) {
+            toast.error(
+              'Could not save this bill, even offline: ' +
+                queueErr.message
+            );
+          }
+
+          return;
+        }
+
+        toast.error(
+          'Error saving order: ' +
+            err.message
+        );
       }
+    });
 
-      toast.error(
-        'Error saving order: ' + err.message
-      );
-    }
-  });
-
-  const handleCustomerSelect = (value) => {
+  const handleCustomerSelect = (
+    value
+  ) => {
     if (value === 'New Customer') {
       setShowCustomerForm(true);
       setCustomer('unknown');
@@ -1035,85 +1768,104 @@ export default function Billing() {
     }
   };
 
-  const handleAddNewCustomer = async (e) => {
-    e.preventDefault();
+  const handleAddNewCustomer =
+    async (e) => {
+      e.preventDefault();
 
-    const {
-      customerName,
-      mobileNo,
-      emergencyMobile,
-      email,
-      address,
-    } = customerForm;
-
-    if (
-      !customerName &&
-      !mobileNo &&
-      !emergencyMobile &&
-      !email &&
-      !address
-    ) {
-      setShowCustomerForm(false);
-      return;
-    }
-
-    if (email && !emailPattern.test(email)) {
-      toast.error(
-        'Please enter a valid email address.'
-      );
-      return;
-    }
-
-    const cleanName = customerName
-      .trim()
-      .replace(/\s+/g, ' ');
-
-    try {
-      const data = await api.addCustomer({
-        customerName: cleanName,
+      const {
+        customerName,
         mobileNo,
         emergencyMobile,
         email,
         address,
-      });
+      } = customerForm;
 
-      if (data.success) {
-        setCustomers((prev) => [
-          ...prev,
-          cleanName,
-        ]);
+      if (
+        !customerName &&
+        !mobileNo &&
+        !emergencyMobile &&
+        !email &&
+        !address
+      ) {
+        setShowCustomerForm(false);
+        return;
+      }
 
-        setCustomerDirectory((prev) => ({
-          ...prev,
-          [cleanName]: {
-            mobileNo,
-            email,
-            address,
-            creditBalance: 0,
-            totalBalanceDue: 0,
-          },
-        }));
-
-        setCustomer(cleanName);
-
-        toast.success(
-          'New customer added successfully!'
-        );
-      } else {
+      if (
+        email &&
+        !emailPattern.test(email)
+      ) {
         toast.error(
-          data.message ||
-          'Failed to add new customer.'
+          'Please enter a valid email address.'
+        );
+
+        return;
+      }
+
+      const cleanName =
+        customerName
+          .trim()
+          .replace(/\s+/g, ' ');
+
+      try {
+        const data =
+          await api.addCustomer({
+            customerName:
+              cleanName,
+
+            mobileNo,
+
+            emergencyMobile,
+
+            email,
+
+            address,
+          });
+
+        if (data.success) {
+          setCustomers((prev) => [
+            ...prev,
+            cleanName,
+          ]);
+
+          setCustomerDirectory(
+            (prev) => ({
+              ...prev,
+
+              [cleanName]: {
+                mobileNo,
+                email,
+                address,
+                creditBalance: 0,
+                totalBalanceDue: 0,
+              },
+            })
+          );
+
+          setCustomer(cleanName);
+
+          toast.success(
+            'New customer added successfully!'
+          );
+        } else {
+          toast.error(
+            data.message ||
+              'Failed to add new customer.'
+          );
+        }
+      } catch (err) {
+        toast.error(
+          'Error adding customer: ' +
+            err.message
+        );
+      } finally {
+        setShowCustomerForm(false);
+
+        setCustomerForm(
+          emptyCustomerForm
         );
       }
-    } catch (err) {
-      toast.error(
-        'Error adding customer: ' + err.message
-      );
-    } finally {
-      setShowCustomerForm(false);
-      setCustomerForm(emptyCustomerForm);
-    }
-  };
+    };
 
   return (
     <div className="flex h-screen">
@@ -1128,11 +1880,14 @@ export default function Billing() {
 
             {webUSBSupported && (
               <button
-                onClick={handleConnectPrinter}
-                className={`text-sm px-3 py-1.5 rounded-lg border ${printerConnected
-                  ? 'border-green-300 bg-green-50 text-green-700'
-                  : 'border-gray-300 bg-white text-gray-600 hover:bg-gray-50'
-                  }`}
+                onClick={
+                  handleConnectPrinter
+                }
+                className={`text-sm px-3 py-1.5 rounded-lg border ${
+                  printerConnected
+                    ? 'border-green-300 bg-green-50 text-green-700'
+                    : 'border-gray-300 bg-white text-gray-600 hover:bg-gray-50'
+                }`}
               >
                 {printerConnected
                   ? '🖨️ Thermal Printer Connected'
@@ -1140,37 +1895,162 @@ export default function Billing() {
               </button>
             )}
 
-            <select
-              value={
-                showCustomerForm
-                  ? 'New Customer'
-                  : customer
+            {/* =========================================================
+                CUSTOMER DROPDOWN ONLY
+                ========================================================= */}
+            <div
+              ref={
+                customerDropdownRef
               }
-              onChange={(e) =>
-                handleCustomerSelect(
-                  e.target.value
-                )
-              }
-              className="border border-gray-300 rounded-lg px-3 py-2 w-full @min-[640px]:w-52 focus:ring-2 focus:ring-brand focus:outline-none"
+              className="relative w-full @min-[640px]:w-64"
             >
-              <option value="unknown">
-                Select Customer
-              </option>
+              <button
+                type="button"
+                onClick={() => {
+                  if (
+                    showCustomerDropdown
+                  ) {
+                    closeCustomerDropdown();
+                  } else {
+                    openCustomerDropdown();
+                  }
+                }}
+                className="border border-gray-300 rounded-lg px-3 py-2 w-full bg-white text-left flex items-center justify-between gap-2 focus:ring-2 focus:ring-brand focus:outline-none"
+              >
+                <span
+                  className={`truncate ${
+                    customer === 'unknown'
+                      ? 'text-gray-500'
+                      : 'text-gray-900'
+                  }`}
+                >
+                  {showCustomerForm
+                    ? '+ New customer'
+                    : customer ===
+                      'unknown'
+                    ? 'Select Customer'
+                    : customer ===
+                      WALKIN_CUSTOMER
+                    ? '🚶 Walk-in / Unknown'
+                    : customer}
+                </span>
 
-              <option value={WALKIN_CUSTOMER}>
-                🚶 Walk-in / Unknown
-              </option>
+                <span className="text-gray-500 text-sm flex-shrink-0">
+                  {showCustomerDropdown
+                    ? '▲'
+                    : '▼'}
+                </span>
+              </button>
 
-              {customers.map((name) => (
-                <option key={name} value={name}>
-                  {name}
-                </option>
-              ))}
+              {showCustomerDropdown && (
+                <div className="absolute z-40 top-full left-0 right-0 mt-1 bg-white border border-gray-300 rounded-lg shadow-xl overflow-hidden">
+                  <div className="p-2 border-b bg-gray-50">
+                    <input
+                      ref={
+                        customerSearchRef
+                      }
+                      type="text"
+                      value={
+                        customerSearch
+                      }
+                      onChange={(e) =>
+                        setCustomerSearch(
+                          e.target.value
+                        )
+                      }
+                      onKeyDown={
+                        handleCustomerSearchKeyDown
+                      }
+                      placeholder="Search customer..."
+                      autoComplete="off"
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-brand focus:outline-none"
+                    />
+                  </div>
 
-              <option value="New Customer">
-                + New customer
-              </option>
-            </select>
+                  <div className="max-h-64 overflow-y-auto">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        selectCustomerFromDropdown(
+                          WALKIN_CUSTOMER
+                        )
+                      }
+                      className={`w-full text-left px-3 py-2 text-sm hover:bg-blue-50 ${
+                        customer ===
+                        WALKIN_CUSTOMER
+                          ? 'bg-blue-50 font-semibold text-brand'
+                          : ''
+                      }`}
+                    >
+                      🚶 Walk-in / Unknown
+                    </button>
+
+                    {filteredCustomers.length >
+                    0 ? (
+                      filteredCustomers.map(
+                        (
+                          name,
+                          index
+                        ) => (
+                          <button
+                            key={name}
+                            ref={(element) => {
+                              customerOptionRefs.current[
+                                index
+                              ] =
+                                element;
+                            }}
+                            type="button"
+                            onMouseEnter={() =>
+                              setHighlightedCustomerIndex(
+                                index
+                              )
+                            }
+                            onClick={() =>
+                              selectCustomerFromDropdown(
+                                name
+                              )
+                            }
+                            className={`w-full text-left px-3 py-2 text-sm border-t border-gray-100 ${
+                              highlightedCustomerIndex ===
+                              index
+                                ? 'bg-blue-100 text-brand'
+                                : 'hover:bg-blue-50'
+                            } ${
+                              customer ===
+                              name
+                                ? 'font-semibold'
+                                : ''
+                            }`}
+                          >
+                            {name}
+                          </button>
+                        )
+                      )
+                    ) : (
+                      <div className="px-3 py-4 text-center text-sm text-gray-500 border-t">
+                        No customer found
+                      </div>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        selectCustomerFromDropdown(
+                          'New Customer'
+                        )
+                      }
+                      className="w-full text-left px-3 py-2 text-sm border-t border-gray-200 text-brand-green font-medium hover:bg-green-50"
+                    >
+                      + New customer
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+            {/* =========================================================
+                END CUSTOMER DROPDOWN ONLY
+                ========================================================= */}
           </div>
 
           {error && (
@@ -1179,15 +2059,18 @@ export default function Billing() {
             </p>
           )}
 
-          {offlineSyncEnabled && !isOnline && (
-            <div className="bg-amber-50 border border-amber-300 text-amber-800 text-sm rounded-lg px-4 py-2">
-              You're offline. Bills can still be
-              created — they'll be saved on this
-              device and synced automatically once
-              you're back online. Stock and prices
-              will be re-checked at that point.
-            </div>
-          )}
+          {offlineSyncEnabled &&
+            !isOnline && (
+              <div className="bg-amber-50 border border-amber-300 text-amber-800 text-sm rounded-lg px-4 py-2">
+                You're offline. Bills can
+                still be created — they'll
+                be saved on this device and
+                synced automatically once
+                you're back online. Stock and
+                prices will be re-checked at
+                that point.
+              </div>
+            )}
 
           <div className="grid grid-cols-1 @min-[768px]:grid-cols-3 gap-6 @min-[768px]:h-[600px]">
             <div className="@min-[768px]:col-span-2 bg-white rounded-lg shadow p-4 @min-[768px]:overflow-y-auto">
@@ -1196,7 +2079,9 @@ export default function Billing() {
                 placeholder="Search Products"
                 value={search}
                 onChange={(e) =>
-                  setSearch(e.target.value)
+                  setSearch(
+                    e.target.value
+                  )
                 }
                 className="border border-gray-300 rounded-lg px-3 py-2 w-full mb-3 focus:ring-2 focus:ring-brand focus:outline-none"
               />
@@ -1208,15 +2093,19 @@ export default function Billing() {
                       <th className="text-left p-2">
                         Code
                       </th>
+
                       <th className="text-left p-2">
                         Name
                       </th>
+
                       <th className="text-left p-2">
                         In Stock
                       </th>
+
                       <th className="text-left p-2">
                         Unit Price
                       </th>
+
                       <th className="text-left p-2">
                         Stock's Total
                       </th>
@@ -1225,7 +2114,7 @@ export default function Billing() {
 
                   <tbody>
                     {filteredProducts.length ===
-                      0 ? (
+                    0 ? (
                       <tr>
                         <td
                           colSpan={5}
@@ -1240,14 +2129,14 @@ export default function Billing() {
                           const available =
                             product.available ??
                             product.quantity -
-                            (product.reserved ||
-                              0);
+                              (product.reserved ||
+                                0);
 
                           const lowStock =
                             product.lowStock ??
                             available <=
-                            (product.lowStockThreshold ??
-                              10);
+                              (product.lowStockThreshold ??
+                                10);
 
                           return (
                             <tr
@@ -1259,14 +2148,16 @@ export default function Billing() {
                                   product
                                 )
                               }
-                              className={`cursor-pointer hover:bg-blue-50 ${selectedProductId ===
+                              className={`cursor-pointer hover:bg-blue-50 ${
+                                selectedProductId ===
                                 product.productID
-                                ? 'bg-blue-100'
-                                : ''
-                                } ${lowStock
+                                  ? 'bg-blue-100'
+                                  : ''
+                              } ${
+                                lowStock
                                   ? 'bg-red-50'
                                   : ''
-                                }`}
+                              }`}
                             >
                               <td className="p-2">
                                 {
@@ -1281,10 +2172,11 @@ export default function Billing() {
                               </td>
 
                               <td
-                                className={`p-2 ${lowStock
-                                  ? 'text-red-700 font-semibold'
-                                  : ''
-                                  }`}
+                                className={`p-2 ${
+                                  lowStock
+                                    ? 'text-red-700 font-semibold'
+                                    : ''
+                                }`}
                               >
                                 {available}
 
@@ -1296,18 +2188,29 @@ export default function Billing() {
                               </td>
 
                               <td className="p-2">
-                                {product.price == null ? (
-                                  <span className="text-gray-400">—</span>
+                                {product.price ==
+                                null ? (
+                                  <span className="text-gray-400">
+                                    —
+                                  </span>
                                 ) : (
-                                  formatMoney(product.price)
+                                  formatMoney(
+                                    product.price
+                                  )
                                 )}
                               </td>
 
                               <td className="p-2">
-                                {product.price == null ? (
-                                  <span className="text-gray-400">—</span>
+                                {product.price ==
+                                null ? (
+                                  <span className="text-gray-400">
+                                    —
+                                  </span>
                                 ) : (
-                                  formatMoney(product.price * available)
+                                  formatMoney(
+                                    product.price *
+                                      available
+                                  )
                                 )}
                               </td>
                             </tr>
@@ -1332,7 +2235,6 @@ export default function Billing() {
                       <b className="text-brand-green">
                         Bill ID:
                       </b>{' '}
-
                       <span className="font-semibold text-lg">
                         {billId}
                       </span>
@@ -1451,10 +2353,14 @@ export default function Billing() {
                       onClick={
                         handleAddToBill
                       }
-                      disabled={addingToBill}
+                      disabled={
+                        addingToBill
+                      }
                       className="bg-brand-green text-white px-4 py-2 rounded-lg shadow hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      {addingToBill ? 'Adding…' : 'Add to Bill'}
+                      {addingToBill
+                        ? 'Adding…'
+                        : 'Add to Bill'}
                     </button>
 
                     <button
@@ -1484,7 +2390,6 @@ export default function Billing() {
                     <b className="text-brand-green">
                       Cashier:
                     </b>{' '}
-
                     <span className="font-semibold text-lg text-brand">
                       {username}
                     </span>
@@ -1503,63 +2408,78 @@ export default function Billing() {
                   <div className="divide-y">
                     {Object.entries(
                       billingItems
-                    ).map(([key, item]) => {
-                      const lineTotal =
-                        roundMoney(
-                          item.unitPrice *
-                          item.quantity
+                    ).map(
+                      ([key, item]) => {
+                        const lineTotal =
+                          roundMoney(
+                            item.unitPrice *
+                              item.quantity
+                          );
+
+                        return (
+                          <div
+                            key={key}
+                            className="cursor-pointer hover:bg-red-50 py-2"
+                            onClick={() =>
+                              removeItem(
+                                key
+                              )
+                            }
+                            title="Click to remove"
+                          >
+                            <div className="flex justify-between">
+                              <span>
+                                #{key}{' '}
+                                {
+                                  item.productCode
+                                }{' '}
+                                {
+                                  item.itemName
+                                }
+                              </span>
+
+                              <span>
+                                {formatMoney(
+                                  lineTotal
+                                )}
+                              </span>
+                            </div>
+
+                            <div className="flex justify-between text-gray-600 text-xs">
+                              <span>
+                                Retail:{' '}
+                                {item.retailPrice ==
+                                null
+                                  ? ''
+                                  : formatMoney(
+                                      item.retailPrice
+                                    )}
+                              </span>
+
+                              <span>
+                                Rate:{' '}
+                                {formatMoney(
+                                  item.unitPrice
+                                )}
+                              </span>
+
+                              <span>
+                                Qty:{' '}
+                                {
+                                  item.quantity
+                                }
+                              </span>
+                            </div>
+                          </div>
                         );
-
-                      return (
-                        <div
-                          key={key}
-                          className="cursor-pointer hover:bg-red-50 py-2"
-                          onClick={() =>
-                            removeItem(key)
-                          }
-                          title="Click to remove"
-                        >
-                          <div className="flex justify-between">
-                            <span>
-                              #{key}{' '}
-                              {item.productCode}{' '}
-                              {item.itemName}
-                            </span>
-
-                            <span>
-                              {formatMoney(
-                                lineTotal
-                              )}
-                            </span>
-                          </div>
-
-                          <div className="flex justify-between text-gray-600 text-xs">
-                            <span>
-                              Retail:{' '}
-                              {item.retailPrice == null
-                                ? ''
-                                : formatMoney(item.retailPrice)}
-                            </span>
-
-                            <span>
-                              Rate:{' '}
-                              {formatMoney(
-                                item.unitPrice
-                              )}
-                            </span>
-
-                            <span>
-                              Qty:{' '}
-                              {item.quantity}
-                            </span>
-                          </div>
-                        </div>
-                      );
-                    })}
+                      }
+                    )}
                   </div>
 
                   <div className="flex justify-between font-bold text-base border-t pt-2 mt-2">
-                    <span>Grand Total</span>
+                    <span>
+                      Grand Total
+                    </span>
 
                     <span>
                       {formatMoney(
@@ -1571,21 +2491,24 @@ export default function Billing() {
                   {customerDirectory[
                     customer
                   ]?.creditBalance > 0 && (
-                      <div className="flex justify-between text-xs text-green-700 mt-1">
-                        <span>
-                          Store credit available
-                        </span>
+                    <div className="flex justify-between text-xs text-green-700 mt-1">
+                      <span>
+                        Store credit
+                        available
+                      </span>
 
-                        <span>
-                          {formatMoney(
-                            customerDirectory[
-                              customer
-                            ].creditBalance
-                          )}{' '}
-                          (auto-applied at checkout)
-                        </span>
-                      </div>
-                    )}
+                      <span>
+                        {formatMoney(
+                          customerDirectory[
+                            customer
+                          ]
+                            .creditBalance
+                        )}{' '}
+                        (auto-applied at
+                        checkout)
+                      </span>
+                    </div>
+                  )}
 
                   <div className="flex justify-between text-sm mt-1 items-center">
                     <span>Paid</span>
@@ -1625,10 +2548,11 @@ export default function Billing() {
                   </div>
 
                   <div
-                    className={`flex justify-between text-sm font-semibold mt-1 ${balance < 0
-                      ? 'text-red-600'
-                      : 'text-green-600'
-                      }`}
+                    className={`flex justify-between text-sm font-semibold mt-1 ${
+                      balance < 0
+                        ? 'text-red-600'
+                        : 'text-green-600'
+                    }`}
                   >
                     <span>
                       {balance < 0
@@ -1638,40 +2562,48 @@ export default function Billing() {
 
                     <span>
                       {formatMoney(
-                        Math.abs(balance)
+                        Math.abs(
+                          balance
+                        )
                       )}
                     </span>
                   </div>
 
-                  {customer !== 'unknown' &&
+                  {customer !==
+                    'unknown' &&
                     customerDirectory[
-                    customer
+                      customer
                     ] && (
                       <div
-                        className={`flex justify-between text-sm font-semibold mt-1 pt-2 border-t ${roundMoney(
-                          (customerDirectory[
-                            customer
-                          ].totalBalanceDue ||
-                            0) -
-                          (customerDirectory[
-                            customer
-                          ].creditBalance ||
-                            0)
-                        ) > 0
-                          ? 'text-red-600'
-                          : roundMoney(
+                        className={`flex justify-between text-sm font-semibold mt-1 pt-2 border-t ${
+                          roundMoney(
                             (customerDirectory[
                               customer
-                            ].totalBalanceDue ||
+                            ]
+                              .totalBalanceDue ||
                               0) -
-                            (customerDirectory[
-                              customer
-                            ].creditBalance ||
-                              0)
-                          ) < 0
+                              (customerDirectory[
+                                customer
+                              ]
+                                .creditBalance ||
+                                0)
+                          ) > 0
+                            ? 'text-red-600'
+                            : roundMoney(
+                                (customerDirectory[
+                                  customer
+                                ]
+                                  .totalBalanceDue ||
+                                  0) -
+                                  (customerDirectory[
+                                    customer
+                                  ]
+                                    .creditBalance ||
+                                    0)
+                              ) < 0
                             ? 'text-green-700'
                             : 'text-gray-600'
-                          }`}
+                        }`}
                       >
                         <span>
                           Customer Balance
@@ -1682,12 +2614,14 @@ export default function Billing() {
                             roundMoney(
                               (customerDirectory[
                                 customer
-                              ].totalBalanceDue ||
+                              ]
+                                .totalBalanceDue ||
                                 0) -
-                              (customerDirectory[
-                                customer
-                              ].creditBalance ||
-                                0)
+                                (customerDirectory[
+                                  customer
+                                ]
+                                  .creditBalance ||
+                                  0)
                             )
                           )}
                         </span>
@@ -1699,10 +2633,14 @@ export default function Billing() {
                   onClick={
                     handleGenerateBill
                   }
-                  disabled={generatingBill}
+                  disabled={
+                    generatingBill
+                  }
                   className="w-full py-2 bg-brand text-white rounded-lg shadow hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {generatingBill ? 'Generating…' : 'Generate Bill'}
+                  {generatingBill
+                    ? 'Generating…'
+                    : 'Generate Bill'}
                 </button>
 
                 <div className="flex space-x-2">
@@ -1716,7 +2654,9 @@ export default function Billing() {
                   </button>
 
                   <button
-                    onClick={handleCancel}
+                    onClick={
+                      handleCancel
+                    }
                     className="w-1/2 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-brand-green hover:text-white"
                   >
                     Cancel
@@ -1863,6 +2803,7 @@ export default function Billing() {
                       setShowCustomerForm(
                         false
                       );
+
                       setCustomerForm(
                         emptyCustomerForm
                       );
@@ -1880,4 +2821,3 @@ export default function Billing() {
     </div>
   );
 }
-
